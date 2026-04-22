@@ -10,7 +10,9 @@ import os
 import pytest
 import pytest_asyncio
 
-os.environ.setdefault("ANTHROPIC_API_KEY", "test-key-not-real")
+os.environ.setdefault("LLM_PROVIDER", "gemini")
+os.environ.setdefault("GOOGLE_API_KEY", "test-google-key-not-real")
+os.environ.setdefault("ANTHROPIC_API_KEY", "")
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("WORKSPACE_DIR", "./test_workspace")
 os.environ.setdefault("BUDGET_MAX_TOKENS_PER_SESSION", "100000")

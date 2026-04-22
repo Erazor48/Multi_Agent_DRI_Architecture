@@ -8,8 +8,9 @@ version = "0.1.0"
 description = "Self-organizing multi-agent DRI company system"
 requires-python = ">=3.12"
 dependencies = [
-    # LLM
+    # LLM providers
     "anthropic>=0.40.0",
+    "google-genai>=1.10.0",
     # Orchestration
     "langgraph>=0.2.50",
     "langgraph-checkpoint-sqlite>=2.0.0",

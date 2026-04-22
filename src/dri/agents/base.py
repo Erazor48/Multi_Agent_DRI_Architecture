@@ -2,8 +2,8 @@
 BaseAgent — shared logic for all agent types.
 
 Handles:
-- LLM calls (with prompt caching, budget enforcement, retry)
-- Tool dispatch (receive tool_use block → execute → return result)
+- LLM calls (via provider abstraction, budget enforcement)
+- Tool dispatch (agentic loop: call → tool_use → result → repeat)
 - Status lifecycle management
 - Message handling (subscribe to bus, dispatch incoming messages)
 - DB persistence (via repositories)
@@ -20,16 +20,12 @@ import uuid
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
-import anthropic
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from dri.config.settings import settings
 from dri.core.budget import BudgetExceededError, BudgetManager, BudgetWarning
 from dri.core.communication import CommunicationBus
 from dri.core.memory import ContextPacket
 from dri.core.models import (
     AgentStatus,
-    DelegateMessage,
     EscalateMessage,
     Message,
     MessageType,
@@ -38,6 +34,8 @@ from dri.core.models import (
     TaskStatus,
 )
 from dri.core.registry import AgentRegistry
+from dri.llm.base import BaseLLMProvider, LLMResponse
+from dri.llm.factory import create_provider
 from dri.storage.database import get_session
 from dri.storage.repositories import AgentRepository, MessageRepository, TaskRepository, ToolCallRepository
 from dri.tools.base import ToolRegistry
@@ -62,18 +60,19 @@ class BaseAgent(ABC):
         registry: AgentRegistry,
         bus: CommunicationBus,
         budget_manager: BudgetManager,
+        provider: BaseLLMProvider | None = None,
     ) -> None:
         self._ctx = context
         self._session_id = session_id
         self._registry = registry
         self._bus = bus
         self._budget_manager = budget_manager
-        self._client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        # Provider injected externally (for tests) or created from settings
+        self._provider: BaseLLMProvider = provider or create_provider()
         self._model = context.model or settings.default_model
         self._pending_reports: asyncio.Queue[ReportMessage] = asyncio.Queue()
         self._pending_escalations: asyncio.Queue[EscalateMessage] = asyncio.Queue()
 
-        # Subscribe to incoming messages
         self._bus.subscribe(self._ctx.agent_id, self._on_message)
 
     # ──────────────────────────────────────────────────────────
@@ -101,15 +100,14 @@ class BaseAgent(ABC):
                 timeout=settings.agent_timeout_seconds,
             )
             await self._set_status(AgentStatus.DONE)
+            alloc = self._budget_manager.get_allocation(self.agent_id)
             report = ReportMessage(
                 from_agent=self.agent_id,
                 to_agent=task.delegated_by,
                 task_id=task.id,
                 result=result,
                 status=TaskStatus.DONE,
-                tokens_used=self._budget_manager.get_allocation(self.agent_id).used
-                if self._budget_manager.get_allocation(self.agent_id)
-                else 0,
+                tokens_used=alloc.used if alloc else 0,
                 child_agent_id=self.agent_id,
             )
             await self._persist_task_done(task.id, result)
@@ -151,52 +149,35 @@ class BaseAgent(ABC):
     # LLM interaction
     # ──────────────────────────────────────────────────────────
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=30),
-        reraise=True,
-    )
     async def _call_llm(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         estimated_tokens: int = 4000,
-    ) -> anthropic.types.Message:
+    ) -> LLMResponse:
         """
-        Make a single LLM call with budget enforcement and prompt caching.
+        Make a single LLM call with budget enforcement.
         All LLM calls in the system go through this method — no exceptions.
+        Retry logic is handled by each provider.
         """
         try:
             await self._budget_manager.check_and_deduct(self.agent_id, estimated_tokens)
         except BudgetWarning as w:
             await self._escalate_budget_warning(w.fraction_remaining)
-            # Budget warning is non-blocking — we continue after escalating
+            # Non-blocking — continue after escalating
 
-        system_prompt = self._ctx.to_system_prompt()
+        response = await self._provider.call(
+            system=self._ctx.to_system_prompt(),
+            messages=messages,
+            tools=tools,
+            model=self._model,
+            max_tokens=settings.max_tokens_per_response,
+        )
 
-        kwargs: dict[str, Any] = {
-            "model": self._model,
-            "max_tokens": settings.max_tokens_per_response,
-            "system": [
-                {
-                    "type": "text",
-                    "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},  # prompt caching
-                }
-            ],
-            "messages": messages,
-        }
-        if tools:
-            kwargs["tools"] = tools
-
-        response = await self._client.messages.create(**kwargs)
-
-        # Reconcile actual vs estimated token usage
-        actual_tokens = response.usage.input_tokens + response.usage.output_tokens
+        actual_tokens = response.input_tokens + response.output_tokens
         await self._budget_manager.record_actual(self.agent_id, estimated_tokens, actual_tokens)
         await self._registry.add_tokens(self.agent_id, actual_tokens)
 
-        # Persist budget deduction to DB
         async with get_session() as db:
             agent_repo = AgentRepository(db)
             await agent_repo.deduct_budget(self.agent_id, actual_tokens)
@@ -214,57 +195,43 @@ class BaseAgent(ABC):
         """
         tool_specs = ToolRegistry.to_claude_specs(self._ctx.allowed_tools)
         messages = list(initial_messages)
+        final_text = ""
 
         for _ in range(20):  # max 20 tool call rounds
             response = await self._call_llm(messages, tools=tool_specs or None)
+            final_text = response.text
 
-            # Collect all content blocks
-            assistant_content: list[dict[str, Any]] = []
-            tool_uses: list[dict[str, Any]] = []
-            final_text = ""
+            # Add assistant turn to history
+            messages.append(response.to_assistant_message())
 
-            for block in response.content:
-                if block.type == "text":
-                    final_text = block.text
-                    assistant_content.append({"type": "text", "text": block.text})
-                elif block.type == "tool_use":
-                    tool_uses.append(block)
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    })
-
-            messages.append({"role": "assistant", "content": assistant_content})
-
-            if response.stop_reason == "end_turn" or not tool_uses:
+            if not response.has_tool_calls:
                 return final_text
 
-            # Execute all tool calls and collect results
+            # Execute all tool calls in parallel and collect results
             tool_results = await asyncio.gather(
-                *[self._execute_tool(tu, task_id) for tu in tool_uses]
+                *[self._execute_tool(tc, task_id) for tc in response.tool_calls]
             )
 
+            # Add tool results as next user turn
             messages.append({
                 "role": "user",
                 "content": [
                     {
                         "type": "tool_result",
-                        "tool_use_id": result["tool_use_id"],
-                        "content": result["content"],
+                        "tool_call_id": r["tool_call_id"],
+                        "content": r["content"],
                     }
-                    for result in tool_results
+                    for r in tool_results
                 ],
             })
 
         return final_text or "Maximum tool call rounds reached."
 
-    async def _execute_tool(self, tool_use_block: Any, task_id: str) -> dict[str, Any]:
-        """Execute one tool call, log it, and return the result block."""
+    async def _execute_tool(self, tool_call: Any, task_id: str) -> dict[str, Any]:
+        """Execute one tool call, log it, and return a result dict."""
         call_id = str(uuid.uuid4())
-        tool_name = tool_use_block.name
-        tool_input = tool_use_block.input or {}
+        tool_name = tool_call.name
+        tool_input = tool_call.input or {}
         start = time.time()
 
         try:
@@ -296,7 +263,7 @@ class BaseAgent(ABC):
             )
 
         return {
-            "tool_use_id": tool_use_block.id,
+            "tool_call_id": tool_call.id,
             "content": result_str,
         }
 
@@ -305,7 +272,6 @@ class BaseAgent(ABC):
     # ──────────────────────────────────────────────────────────
 
     async def _on_message(self, message: Message) -> None:
-        """Route incoming messages to the appropriate queue."""
         if message.type == MessageType.REPORT and isinstance(message, ReportMessage):
             await self._pending_reports.put(message)
         elif message.type == MessageType.ESCALATE and isinstance(message, EscalateMessage):
@@ -314,7 +280,6 @@ class BaseAgent(ABC):
     async def _wait_for_reports(
         self, expected_count: int, timeout: float | None = None
     ) -> list[ReportMessage]:
-        """Wait until we have `expected_count` report messages from children."""
         reports: list[ReportMessage] = []
         deadline = asyncio.get_event_loop().time() + (timeout or settings.agent_timeout_seconds)
 
@@ -335,7 +300,7 @@ class BaseAgent(ABC):
     # ──────────────────────────────────────────────────────────
 
     async def _escalate_budget_warning(self, fraction_remaining: float) -> None:
-        if self._ctx.parent_title == "User":  # root agent — nowhere to escalate
+        if self._ctx.parent_title == "User":
             return
         msg = EscalateMessage(
             from_agent=self.agent_id,
@@ -360,14 +325,10 @@ class BaseAgent(ABC):
             await agent_repo.update_status(self.agent_id, status, error)
 
     async def _persist_task_done(self, task_id: str, result: str) -> None:
-        used = (
-            self._budget_manager.get_allocation(self.agent_id).used
-            if self._budget_manager.get_allocation(self.agent_id)
-            else 0
-        )
+        alloc = self._budget_manager.get_allocation(self.agent_id)
         async with get_session() as db:
             task_repo = TaskRepository(db)
-            await task_repo.complete(task_id, result, used)
+            await task_repo.complete(task_id, result, alloc.used if alloc else 0)
 
     async def _persist_task_failed(self, task_id: str, error: str) -> None:
         async with get_session() as db:
