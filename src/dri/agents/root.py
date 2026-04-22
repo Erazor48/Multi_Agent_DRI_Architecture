@@ -183,12 +183,10 @@ class RootAgent(BaseAgent):
             estimated_tokens=6000,
         )
 
-        initial_message = ""
-        for block in response.content:
-            if block.type == "text":
-                initial_message = block.text
-            elif block.type == "tool_use" and block.name == "design_company":
-                return block.input, initial_message
+        initial_message = response.text
+        for tc in response.tool_calls:
+            if tc.name == "design_company":
+                return tc.input, initial_message
 
         return None, initial_message
 
