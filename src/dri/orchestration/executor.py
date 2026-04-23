@@ -145,4 +145,8 @@ class Executor:
             f"Tokens used: {budget_manager.session_used:,}"
         )
 
-        return report.result or "No result produced."
+        if report.result:
+            return report.result
+        if report.issues:
+            return "[Session failed]\n\n**Error:**\n```\n" + "\n".join(report.issues) + "\n```"
+        return "No result produced."

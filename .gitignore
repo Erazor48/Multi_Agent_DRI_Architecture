@@ -1,5 +1,7 @@
 .env
 .venv/
+credentials/
+docs/
 __pycache__/
 *.pyc
 *.pyo

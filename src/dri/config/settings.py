@@ -24,10 +24,16 @@ class Settings(BaseSettings):
     anthropic_root_model: str = Field("claude-sonnet-4-6")
     anthropic_default_model: str = Field("claude-sonnet-4-6")
 
-    # ── Gemini ────────────────────────────────────────────────────────────
-    google_api_key: str = Field("", description="Google AI Studio / Vertex AI key")
-    gemini_root_model: str = Field("gemini-2.5-pro-preview-05-06", description="Model for CEO (most capable)")
-    gemini_default_model: str = Field("gemini-2.5-flash-preview-04-17", description="Model for all other agents")
+    # ── Gemini (AI Studio direct key) ────────────────────────────────────
+    google_api_key: str = Field("", description="Google AI Studio API key (not needed for Vertex AI)")
+    gemini_root_model: str = Field("gemini-2.5-pro", description="Model for CEO (most capable)")
+    gemini_default_model: str = Field("gemini-2.5-flash", description="Model for all other agents")
+
+    # ── Vertex AI (service account — alternative to API key) ─────────────
+    use_vertex_ai: bool = Field(False, description="Use Vertex AI instead of AI Studio")
+    vertex_project: str = Field("", description="GCP project ID (read from credentials file if empty)")
+    vertex_location: str = Field("us-central1", description="Vertex AI region")
+    google_application_credentials: str = Field("", description="Path to service account JSON key")
 
     # ── Unified model accessors (resolve to active provider) ──────────────
     @property
@@ -71,8 +77,14 @@ class Settings(BaseSettings):
     def validate_provider_key(self) -> "Settings":
         if self.llm_provider == "anthropic" and not self.anthropic_api_key:
             raise ValueError("ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic")
-        if self.llm_provider == "gemini" and not self.google_api_key:
-            raise ValueError("GOOGLE_API_KEY is required when LLM_PROVIDER=gemini")
+        if self.llm_provider == "gemini":
+            if self.use_vertex_ai:
+                if not self.google_application_credentials:
+                    raise ValueError(
+                        "GOOGLE_APPLICATION_CREDENTIALS is required when USE_VERTEX_AI=true"
+                    )
+            elif not self.google_api_key:
+                raise ValueError("GOOGLE_API_KEY is required when LLM_PROVIDER=gemini and USE_VERTEX_AI=false")
         return self
 
     @property

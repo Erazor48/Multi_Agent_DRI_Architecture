@@ -14,7 +14,13 @@ def create_provider() -> BaseLLMProvider:
 
     if s.llm_provider == "gemini":
         from dri.llm.gemini_provider import GeminiProvider
-        return GeminiProvider(api_key=s.google_api_key)
+        return GeminiProvider(
+            api_key=s.google_api_key,
+            vertex_ai=s.use_vertex_ai,
+            project=s.vertex_project,
+            location=s.vertex_location,
+            credentials_file=s.google_application_credentials,
+        )
 
     from dri.llm.anthropic_provider import AnthropicProvider
     return AnthropicProvider(api_key=s.anthropic_api_key)

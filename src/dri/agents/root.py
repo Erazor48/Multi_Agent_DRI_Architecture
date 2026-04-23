@@ -216,7 +216,4 @@ class RootAgent(BaseAgent):
             }
         ]
         response = await self._call_llm(messages, estimated_tokens=5000)
-        for block in response.content:
-            if block.type == "text":
-                return block.text
-        return results_text
+        return response.text or results_text

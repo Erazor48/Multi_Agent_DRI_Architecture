@@ -13,9 +13,40 @@ from dri.llm.base import BaseLLMProvider, LLMResponse, ToolCall
 
 
 class GeminiProvider(BaseLLMProvider):
-    def __init__(self, api_key: str) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str = "",
+        vertex_ai: bool = False,
+        project: str = "",
+        location: str = "us-central1",
+        credentials_file: str = "",
+    ) -> None:
         from google import genai
-        self._client = genai.Client(api_key=api_key)
+
+        if vertex_ai:
+            import os
+            from google.oauth2 import service_account
+
+            creds = service_account.Credentials.from_service_account_file(
+                credentials_file,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            )
+            # Extract project from credentials file if not explicitly provided
+            resolved_project = project or creds.service_account_email.split("@")[1].split(".")[0]
+            if not project:
+                import json
+                with open(credentials_file) as f:
+                    resolved_project = json.load(f).get("project_id", "")
+
+            self._client = genai.Client(
+                vertexai=True,
+                project=resolved_project,
+                location=location,
+                credentials=creds,
+            )
+        else:
+            self._client = genai.Client(api_key=api_key)
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=30), reraise=True)
     async def call(

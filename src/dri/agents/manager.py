@@ -191,9 +191,9 @@ class ManagerAgent(BaseAgent):
 
         response = await self._call_llm(messages, tools=[_ORG_PLAN_TOOL])
 
-        for block in response.content:
-            if block.type == "tool_use" and block.name == "create_org_plan":
-                return block.input
+        for tc in response.tool_calls:
+            if tc.name == "create_org_plan":
+                return tc.input
 
         return None
 
@@ -226,7 +226,4 @@ class ManagerAgent(BaseAgent):
             }
         ]
         response = await self._call_llm(messages)
-        for block in response.content:
-            if block.type == "text":
-                return block.text
-        return results_text
+        return response.text or results_text
