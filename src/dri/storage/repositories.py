@@ -16,13 +16,15 @@ from dri.core.models import (
     AgentState,
     AgentStatus,
     BudgetAllocation,
+    CompanyMessage,
     Message,
+    PersistentCompany,
     Session,
     Skill,
     Task,
     TaskStatus,
 )
-from dri.storage.orm import AgentORM, MessageORM, SessionORM, TaskORM, ToolCallORM
+from dri.storage.orm import AgentORM, CompanyMessageORM, MessageORM, PersistentCompanyORM, SessionORM, TaskORM, ToolCallORM
 
 
 # ──────────────────────────────────────────────────────────────
@@ -287,6 +289,110 @@ class MessageRepository:
             sent_at=message.sent_at,
         )
         self._db.add(orm)
+
+
+# ──────────────────────────────────────────────────────────────
+# Persistent Company Repository
+# ──────────────────────────────────────────────────────────────
+
+
+class PersistentCompanyRepository:
+    def __init__(self, db: AsyncSession) -> None:
+        self._db = db
+
+    async def create(self, company: PersistentCompany) -> None:
+        import json
+        orm = PersistentCompanyORM(
+            id=company.id,
+            name=company.name,
+            vision=company.vision,
+            pitch=company.pitch,
+            org_structure_json=json.dumps(company.org_structure),
+            status=company.status,
+            created_at=company.created_at,
+        )
+        self._db.add(orm)
+
+    async def get(self, company_id: str) -> PersistentCompany | None:
+        import json
+        result = await self._db.get(PersistentCompanyORM, company_id)
+        if result is None:
+            return None
+        return PersistentCompany(
+            id=result.id,
+            name=result.name,
+            vision=result.vision,
+            pitch=result.pitch,
+            org_structure=json.loads(result.org_structure_json),
+            status=result.status,
+            created_at=result.created_at,
+        )
+
+    async def get_latest(self) -> PersistentCompany | None:
+        import json
+        result = await self._db.execute(
+            select(PersistentCompanyORM)
+            .where(PersistentCompanyORM.status == "active")
+            .order_by(PersistentCompanyORM.created_at.desc())
+            .limit(1)
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return PersistentCompany(
+            id=row.id,
+            name=row.name,
+            vision=row.vision,
+            pitch=row.pitch,
+            org_structure=json.loads(row.org_structure_json),
+            status=row.status,
+            created_at=row.created_at,
+        )
+
+    async def list_active(self) -> list[PersistentCompany]:
+        import json
+        result = await self._db.execute(
+            select(PersistentCompanyORM)
+            .where(PersistentCompanyORM.status == "active")
+            .order_by(PersistentCompanyORM.created_at.desc())
+        )
+        return [
+            PersistentCompany(
+                id=row.id, name=row.name, vision=row.vision, pitch=row.pitch,
+                org_structure=json.loads(row.org_structure_json),
+                status=row.status, created_at=row.created_at,
+            )
+            for row in result.scalars()
+        ]
+
+
+class CompanyMessageRepository:
+    def __init__(self, db: AsyncSession) -> None:
+        self._db = db
+
+    async def add(self, msg: CompanyMessage) -> None:
+        orm = CompanyMessageORM(
+            id=msg.id,
+            company_id=msg.company_id,
+            role=msg.role,
+            content=msg.content,
+            created_at=msg.created_at,
+        )
+        self._db.add(orm)
+
+    async def list_by_company(self, company_id: str) -> list[CompanyMessage]:
+        result = await self._db.execute(
+            select(CompanyMessageORM)
+            .where(CompanyMessageORM.company_id == company_id)
+            .order_by(CompanyMessageORM.created_at.asc())
+        )
+        return [
+            CompanyMessage(
+                id=row.id, company_id=row.company_id,
+                role=row.role, content=row.content, created_at=row.created_at,
+            )
+            for row in result.scalars()
+        ]
 
 
 # ──────────────────────────────────────────────────────────────

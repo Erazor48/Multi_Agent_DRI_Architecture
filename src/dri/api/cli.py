@@ -129,6 +129,184 @@ def org() -> None:
     console.print("[dim]Org chart view — coming soon.[/dim]")
 
 
+# ── Persistent company commands ────────────────────────────────────────────────
+
+company_app = typer.Typer(name="company", help="Manage persistent companies.")
+app.add_typer(company_app, name="company")
+
+
+@company_app.command("create")
+def company_create(
+    pitch: str = typer.Option("", "--pitch", "-p", help="Company pitch"),
+) -> None:
+    """Create a new persistent company."""
+    _print_banner()
+    if not pitch:
+        console.print("[bold]Describe your company:[/bold]")
+        pitch = typer.prompt(">")
+    if not pitch.strip():
+        console.print("[red]No pitch provided.[/red]")
+        raise typer.Exit(1)
+
+    console.print(Panel(f"[italic]{pitch}[/italic]", title="[bold]Your Pitch[/bold]", border_style="dim"))
+
+    async def _run() -> "PersistentCompany":  # type: ignore[name-defined]
+        from dri.orchestration.company_executor import CompanyExecutor
+        return await CompanyExecutor.create(pitch, on_status=lambda _: None)
+
+    with Progress(SpinnerColumn(), TextColumn("{task.description}"), TimeElapsedColumn(), console=console) as p:
+        p.add_task("Creating company...", total=None)
+        try:
+            company = asyncio.run(_run())
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
+
+    console.print()
+    console.print(Panel(
+        f"[bold green]{company.name}[/bold green]\n"
+        f"[dim]{company.vision}[/dim]\n\n"
+        f"[bold]Departments:[/bold]\n" +
+        "\n".join(f"  • {d['title']}" for d in company.org_structure) +
+        f"\n\n[dim]ID: {company.id}[/dim]",
+        title="[bold]Company Created[/bold]",
+        border_style="green",
+    ))
+    console.print("\n[dim]Use [bold]dri company chat[/bold] to start working with your CEO.[/dim]")
+
+
+@company_app.command("list")
+def company_list() -> None:
+    """List all persistent companies."""
+    async def _run() -> None:
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import PersistentCompanyRepository
+        from rich.table import Table
+
+        await init_db()
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            companies = await repo.list_active()
+
+        if not companies:
+            console.print("[dim]No persistent companies found. Use [bold]dri company create[/bold].[/dim]")
+            return
+
+        table = Table(title="Your Companies", show_lines=True)
+        table.add_column("ID", style="dim", width=10)
+        table.add_column("Name", style="bold")
+        table.add_column("Vision")
+        table.add_column("Departments", justify="right")
+        table.add_column("Created", style="dim")
+
+        for c in companies:
+            table.add_row(
+                c.id[:8] + "...",
+                c.name,
+                c.vision[:60] + "..." if len(c.vision) > 60 else c.vision,
+                str(len(c.org_structure)),
+                c.created_at.strftime("%Y-%m-%d %H:%M"),
+            )
+        console.print(table)
+
+    asyncio.run(_run())
+
+
+@company_app.command("chat")
+def company_chat(
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+) -> None:
+    """Start an interactive session with your company CEO."""
+    async def _resolve_id() -> str:
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import PersistentCompanyRepository
+        await init_db()
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            if company_id:
+                c = await repo.get(company_id)
+            else:
+                c = await repo.get_latest()
+        if c is None:
+            raise ValueError("No company found. Use [bold]dri company create[/bold] first.")
+        return c.id, c.name  # type: ignore[return-value]
+
+    try:
+        cid, cname = asyncio.run(_resolve_id())
+    except ValueError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+
+    console.print()
+    console.print(Panel(
+        f"[bold blue]{cname}[/bold blue]\n[dim]Type your message. [bold]/quit[/bold] to exit.[/dim]",
+        border_style="blue",
+    ))
+    console.print()
+
+    while True:
+        try:
+            user_input = typer.prompt("[green]You[/green]")
+        except (KeyboardInterrupt, EOFError):
+            break
+        if user_input.strip().lower() in ("/quit", "/exit", "exit", "quit"):
+            break
+        if not user_input.strip():
+            continue
+
+        status_ref: list[str] = ["CEO is thinking..."]
+
+        with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console, transient=True) as p:
+            task_id = p.add_task(status_ref[0], total=None)
+
+            async def _chat() -> str:
+                from dri.orchestration.company_executor import CompanyExecutor
+                def _upd(m: str) -> None:
+                    status_ref[0] = m
+                    p.update(task_id, description=m)
+                return await CompanyExecutor.chat(cid, user_input, on_status=_upd)
+
+            try:
+                reply = asyncio.run(_chat())
+            except Exception as e:
+                console.print(f"[red]Error: {e}[/red]")
+                continue
+
+        console.print()
+        console.print(f"[bold blue]{cname} CEO[/bold blue]")
+        console.print(Markdown(reply))
+        console.print()
+
+
+@company_app.command("task")
+def company_task(
+    task: str = typer.Option(..., "--task", "-t", help="Task to execute"),
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+) -> None:
+    """Spawn a team to execute a task for your company."""
+    async def _run() -> str:
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import PersistentCompanyRepository
+        from dri.orchestration.company_executor import CompanyExecutor
+        await init_db()
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            c = await repo.get(company_id) if company_id else await repo.get_latest()
+        if c is None:
+            raise ValueError("No company found.")
+        return await CompanyExecutor.task(c.id, task)
+
+    with Progress(SpinnerColumn(), TextColumn("{task.description}"), TimeElapsedColumn(), console=console) as p:
+        p.add_task("Executing task...", total=None)
+        try:
+            result = asyncio.run(_run())
+        except Exception as e:
+            console.print(f"[red]Error: {e}[/red]")
+            raise typer.Exit(1)
+
+    _print_result(result)
+
+
 @app.command()
 def sessions() -> None:
     """List all past sessions."""

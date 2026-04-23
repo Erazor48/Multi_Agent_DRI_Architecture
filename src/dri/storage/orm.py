@@ -93,6 +93,32 @@ class MessageORM(Base):
     sent_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class PersistentCompanyORM(Base):
+    __tablename__ = "persistent_companies"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    vision: Mapped[str] = mapped_column(Text)
+    pitch: Mapped[str] = mapped_column(Text)
+    org_structure_json: Mapped[str] = mapped_column(Text, default="[]")
+    status: Mapped[str] = mapped_column(String, default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    messages: Mapped[list["CompanyMessageORM"]] = relationship("CompanyMessageORM", back_populates="company")
+
+
+class CompanyMessageORM(Base):
+    __tablename__ = "company_messages"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    company_id: Mapped[str] = mapped_column(String, ForeignKey("persistent_companies.id"), index=True)
+    role: Mapped[str] = mapped_column(String)   # "user" | "ceo"
+    content: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    company: Mapped[PersistentCompanyORM] = relationship("PersistentCompanyORM", back_populates="messages")
+
+
 class ToolCallORM(Base):
     __tablename__ = "tool_calls"
 

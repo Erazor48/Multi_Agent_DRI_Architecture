@@ -267,6 +267,33 @@ class OrgChart(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────
+# Persistent Company
+# ──────────────────────────────────────────────────────────────
+
+
+class PersistentCompany(BaseModel):
+    """A company that persists across sessions — has memory, identity, and ongoing strategy."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    vision: str
+    pitch: str
+    org_structure: list[dict[str, Any]] = Field(default_factory=list)  # departments array
+    status: str = "active"  # active | archived
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class CompanyMessage(BaseModel):
+    """One turn in the ongoing conversation with a persistent company CEO."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    company_id: str
+    role: str  # "user" | "ceo"
+    content: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+# ──────────────────────────────────────────────────────────────
 # Session
 # ──────────────────────────────────────────────────────────────
 
