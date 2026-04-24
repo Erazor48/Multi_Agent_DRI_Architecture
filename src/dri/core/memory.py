@@ -97,6 +97,23 @@ class ContextPacket:
             f"- Your token budget for this task is {self.budget_tokens:,} tokens."
         )
 
+        lines.append("\n## Integrity Rules — Mandatory, No Exceptions\n")
+        lines.append(
+            "- **NEVER fabricate data, outcomes, responses, or feedback.** "
+            "If you lack a tool or capability to perform an action, do NOT invent what the result would be.\n"
+            "- **For any action requiring real-world interaction** (sending emails, messages, posts, calls, outreach): "
+            "use the `propose_external_action` tool. This logs the proposed action for founder approval. "
+            "Do NOT proceed as if the action was executed — report upward that it is pending.\n"
+            "- **When you don't know something**, say so. "
+            "Use `web_search` to find real data, or escalate. An honest 'I could not find this' "
+            "is always better than an invented answer.\n"
+            "- **Mark hypotheticals explicitly.** Any example, template, or illustrative content "
+            "that is not real data must be labeled `[EXAMPLE — NOT REAL DATA]`.\n"
+            "- **Cite every file you produce.** In your report to your manager, list each file "
+            "you created or modified with its exact workspace-relative path "
+            "(e.g. `shared/startup_data.csv`, `marketing/report.md`)."
+        )
+
         return "\n".join(lines)
 
 

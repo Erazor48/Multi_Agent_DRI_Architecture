@@ -211,7 +211,12 @@ class RootAgent(BaseAgent):
                     f"## Original User Request\n\n{task.description}\n\n"
                     f"## Department Reports\n\n{results_text}\n\n"
                     "As CEO, write the final executive summary for the user. "
-                    "Be specific, structured, and actionable. This is what the user sees."
+                    "Be specific, structured, and actionable. This is what the user sees.\n\n"
+                    "At the end of your summary, include a **Documents Produced** section "
+                    "listing every file created by your teams during this session, "
+                    "with their exact workspace-relative paths. "
+                    "If an action was proposed via `propose_external_action`, list it "
+                    "under **Pending Approvals** with its ID and what it proposes to do."
                 ),
             }
         ]

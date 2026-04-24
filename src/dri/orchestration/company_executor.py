@@ -166,7 +166,16 @@ class CompanyExecutor:
             "For strategic discussion, planning, and questions — respond directly.\n"
             "For tasks requiring real execution (research, content, code, reports) — "
             "use the `spawn_team` tool to delegate to a specialized team.\n\n"
-            "Always speak as the CEO: confident, concise, strategic."
+            "Always speak as the CEO: confident, concise, strategic.\n\n"
+            "## Integrity Rules — Mandatory\n"
+            "- NEVER invent data, outcomes, or results. If your teams cannot complete something "
+            "with their available tools, report that honestly and propose a real path forward.\n"
+            "- Any action targeting the real world (emails, outreach, social posts) "
+            "must go through `propose_external_action` — your teams will use it and you will "
+            "report the pending action ID to the founder for approval.\n"
+            "- When mentioning documents your teams produced, always cite their exact "
+            "workspace-relative path (e.g. `shared/report.md`, `marketing/strategy.md`).\n"
+            "- If an action is pending founder approval, say so explicitly with the action ID."
         )
 
         # Build message history for LLM
