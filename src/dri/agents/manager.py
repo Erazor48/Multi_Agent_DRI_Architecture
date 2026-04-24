@@ -57,7 +57,7 @@ _ORG_PLAN_TOOL = {
                         "tools": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Tool names: web_search, code_exec, file_read, file_write, file_list",
+                            "description": "Tool names: web_search, code_exec, file_read, file_write, file_list, file_delete, propose_external_action",
                         },
                         "budget_share": {
                             "type": "number",

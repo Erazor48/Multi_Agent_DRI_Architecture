@@ -228,6 +228,7 @@ class BaseAgent(ABC):
         return final_text or "Maximum tool call rounds reached."
 
     _FILE_TOOLS = {"file_read", "file_write", "file_list", "file_delete"}
+    _EXTERNAL_TOOLS = {"propose_external_action"}
 
     async def _execute_tool(self, tool_call: Any, task_id: str) -> dict[str, Any]:
         """Execute one tool call, log it, and return a result dict."""
@@ -242,6 +243,12 @@ class BaseAgent(ABC):
             tool_input["_permissions"] = [
                 p.model_dump() for p in self._ctx.workspace_permissions
             ]
+
+        # Inject agent identity into external action tools
+        if tool_name in self._EXTERNAL_TOOLS:
+            tool_input["_workspace_root"] = self._ctx.workspace_root
+            tool_input["_agent_title"] = self._ctx.title
+            tool_input["_company_name"] = self._ctx.company_name
 
         try:
             tool = ToolRegistry.get(tool_name)

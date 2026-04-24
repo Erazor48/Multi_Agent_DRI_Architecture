@@ -301,6 +301,208 @@ def company_task(
     _print_result(result)
 
 
+# ── Approvals commands ─────────────────────────────────────────────────────────
+
+approvals_app = typer.Typer(name="approvals", help="Review and decide on pending external actions.")
+company_app.add_typer(approvals_app, name="approvals")
+
+
+def _load_pending(workspace_root: str) -> tuple[list[dict], str]:
+    """Load pending approvals file. Returns (actions, file_path)."""
+    import json
+    from pathlib import Path
+    pending_file = Path(workspace_root) / "shared" / "_pending_approvals.json"
+    if not pending_file.exists():
+        return [], str(pending_file)
+    try:
+        return json.loads(pending_file.read_text(encoding="utf-8")), str(pending_file)
+    except Exception:
+        return [], str(pending_file)
+
+
+def _save_pending(workspace_root: str, actions: list[dict]) -> None:
+    import json
+    from pathlib import Path
+    pending_file = Path(workspace_root) / "shared" / "_pending_approvals.json"
+    pending_file.write_text(json.dumps(actions, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+async def _get_workspace(company_id: str) -> str | None:
+    import re
+    from dri.storage.database import init_db, get_session
+    from dri.storage.repositories import PersistentCompanyRepository
+    from dri.config.settings import get_settings
+
+    await init_db()
+    async with get_session() as db:
+        repo = PersistentCompanyRepository(db)
+        c = await repo.get(company_id) if company_id else await repo.get_latest()
+    if c is None:
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "-", c.name.lower()).strip("-")
+    return str(get_settings().workspace_dir / slug)
+
+
+@approvals_app.command("list")
+def approvals_list(
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+    all_: bool = typer.Option(False, "--all", "-a", help="Show decided actions too"),
+) -> None:
+    """List pending external actions awaiting founder approval."""
+    from rich.table import Table
+
+    async def _run() -> tuple[list[dict], str | None]:
+        ws = await _get_workspace(company_id)
+        if ws is None:
+            return [], None
+        actions, _ = _load_pending(ws)
+        return actions, ws
+
+    actions, ws = asyncio.run(_run())
+
+    if ws is None:
+        console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
+        raise typer.Exit(1)
+
+    visible = actions if all_ else [a for a in actions if a["status"] == "pending"]
+
+    if not visible:
+        console.print("[dim]No pending approvals.[/dim]")
+        if not all_:
+            console.print("[dim]Use --all to see decided actions.[/dim]")
+        return
+
+    table = Table(title="Pending External Actions", show_lines=True)
+    table.add_column("#", style="bold", width=4)
+    table.add_column("Status", width=12)
+    table.add_column("Type", width=16)
+    table.add_column("Proposed by", width=22)
+    table.add_column("Recipient")
+    table.add_column("Subject")
+
+    status_colors = {"pending": "yellow", "approved": "green", "rejected": "red"}
+
+    for a in visible:
+        color = status_colors.get(a["status"], "white")
+        table.add_row(
+            str(a["id"]),
+            f"[{color}]{a['status']}[/{color}]",
+            a.get("action_type", ""),
+            a.get("proposed_by", ""),
+            a.get("recipient", "")[:40],
+            a.get("subject", "")[:40] or "[dim](none)[/dim]",
+        )
+
+    console.print(table)
+    console.print(f"\n[dim]Run [bold]dri company approvals show --id {company_id} <N>[/bold] to read full content.[/dim]")
+    console.print(f"[dim]Run [bold]dri company approvals approve --id {company_id} <N>[/bold] to approve.[/dim]")
+
+
+@approvals_app.command("show")
+def approvals_show(
+    action_id: int = typer.Argument(..., help="Action ID to inspect"),
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+) -> None:
+    """Show the full content of a pending action."""
+    async def _run() -> list[dict]:
+        ws = await _get_workspace(company_id)
+        if ws is None:
+            return []
+        actions, _ = _load_pending(ws)
+        return actions
+
+    actions = asyncio.run(_run())
+    if not actions:
+        console.print("[red]No pending approvals found.[/red]")
+        raise typer.Exit(1)
+
+    match = next((a for a in actions if a["id"] == action_id), None)
+    if match is None:
+        console.print(f"[red]Action #{action_id} not found.[/red]")
+        raise typer.Exit(1)
+
+    status_colors = {"pending": "yellow", "approved": "green", "rejected": "red"}
+    color = status_colors.get(match["status"], "white")
+
+    console.print()
+    console.print(Panel(
+        f"[bold]Type:[/bold] {match.get('action_type', '')}\n"
+        f"[bold]Status:[/bold] [{color}]{match['status']}[/{color}]\n"
+        f"[bold]Proposed by:[/bold] {match.get('proposed_by', '')}\n"
+        f"[bold]Proposed at:[/bold] {match.get('proposed_at', '')}\n"
+        f"[bold]Recipient:[/bold] {match.get('recipient', '')}\n"
+        f"[bold]Subject:[/bold] {match.get('subject', '') or '(none)'}\n\n"
+        f"[bold]Rationale:[/bold]\n{match.get('rationale', '')}\n\n"
+        f"[bold]Content:[/bold]\n{match.get('content', '')}",
+        title=f"[bold]Action #{action_id}[/bold]",
+        border_style=color,
+    ))
+    if match.get("decision_note"):
+        console.print(f"[dim]Decision note: {match['decision_note']}[/dim]")
+    console.print()
+
+
+@approvals_app.command("approve")
+def approvals_approve(
+    action_id: int = typer.Argument(..., help="Action ID to approve"),
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+    note: str = typer.Option("", "--note", "-n", help="Optional note"),
+) -> None:
+    """Approve a pending external action (marks it — execution depends on available integrations)."""
+    from datetime import datetime, timezone
+
+    async def _run() -> bool:
+        ws = await _get_workspace(company_id)
+        if ws is None:
+            return False
+        actions, _ = _load_pending(ws)
+        for a in actions:
+            if a["id"] == action_id:
+                a["status"] = "approved"
+                a["decided_at"] = datetime.now(timezone.utc).isoformat()
+                a["decision_note"] = note or None
+                _save_pending(ws, actions)
+                return True
+        return False
+
+    found = asyncio.run(_run())
+    if not found:
+        console.print(f"[red]Action #{action_id} not found.[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Action #{action_id} approved.[/green]")
+    console.print("[dim]Note: actual execution requires a configured integration (email, etc.).[/dim]")
+
+
+@approvals_app.command("reject")
+def approvals_reject(
+    action_id: int = typer.Argument(..., help="Action ID to reject"),
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+    note: str = typer.Option("", "--note", "-n", help="Reason for rejection"),
+) -> None:
+    """Reject a pending external action."""
+    from datetime import datetime, timezone
+
+    async def _run() -> bool:
+        ws = await _get_workspace(company_id)
+        if ws is None:
+            return False
+        actions, _ = _load_pending(ws)
+        for a in actions:
+            if a["id"] == action_id:
+                a["status"] = "rejected"
+                a["decided_at"] = datetime.now(timezone.utc).isoformat()
+                a["decision_note"] = note or None
+                _save_pending(ws, actions)
+                return True
+        return False
+
+    found = asyncio.run(_run())
+    if not found:
+        console.print(f"[red]Action #{action_id} not found.[/red]")
+        raise typer.Exit(1)
+    console.print(f"[red]Action #{action_id} rejected.[/red]")
+
+
 @app.command()
 def sessions() -> None:
     """List all past sessions."""
