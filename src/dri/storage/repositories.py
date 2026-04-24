@@ -349,6 +349,19 @@ class PersistentCompanyRepository:
             created_at=row.created_at,
         )
 
+    async def remove_department(self, company_id: str, dept_title: str) -> bool:
+        """Remove a department from org_structure. Returns True if found and removed."""
+        import json
+        result = await self._db.get(PersistentCompanyORM, company_id)
+        if result is None:
+            return False
+        org = json.loads(result.org_structure_json)
+        new_org = [d for d in org if d.get("title", "").lower() != dept_title.lower()]
+        if len(new_org) == len(org):
+            return False
+        result.org_structure_json = json.dumps(new_org)
+        return True
+
     async def list_active(self) -> list[PersistentCompany]:
         import json
         result = await self._db.execute(

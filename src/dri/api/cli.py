@@ -503,6 +503,120 @@ def approvals_reject(
     console.print(f"[red]Action #{action_id} rejected.[/red]")
 
 
+@company_app.command("decommission")
+def company_decommission(
+    title: str = typer.Argument(..., help="Exact department title to decommission (e.g. 'Chief Marketing Officer')"),
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+    archive: bool = typer.Option(False, "--archive", "-a", help="Archive deliverables to shared/archive/ before removal"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
+) -> None:
+    """Decommission a department: handle its files and remove it from the org chart."""
+    import re
+    import shutil
+    from pathlib import Path
+    from dri.config.settings import get_settings
+
+    async def _get_company() -> tuple[str, str, str] | None:
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import PersistentCompanyRepository
+        await init_db()
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            c = await repo.get(company_id) if company_id else await repo.get_latest()
+        if c is None:
+            return None
+        slug = re.sub(r"[^a-z0-9]+", "-", c.name.lower()).strip("-")
+        dept_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+        ws = str(get_settings().workspace_dir / slug)
+        return c.id, ws, dept_slug
+
+    info = asyncio.run(_get_company())
+    if info is None:
+        console.print("[red]No company found.[/red]")
+        raise typer.Exit(1)
+
+    cid, workspace_root, dept_slug = info
+    dept_path = Path(workspace_root) / dept_slug
+
+    # Show what exists
+    console.print()
+    if not dept_path.exists():
+        console.print(f"[dim]Dept folder '{dept_slug}/' does not exist — only removing from org chart.[/dim]")
+        files: list[Path] = []
+    else:
+        files = sorted(dept_path.rglob("*") if dept_path.exists() else [])
+        files = [f for f in files if f.is_file()]
+        wip_files = [f for f in files if "_wip" in str(f.relative_to(dept_path))]
+        deliverables = [f for f in files if "_wip" not in str(f.relative_to(dept_path))]
+
+        console.print(Panel(
+            f"[bold]Department:[/bold] {title}\n"
+            f"[bold]Folder:[/bold] {dept_slug}/\n"
+            f"[bold]Deliverables:[/bold] {len(deliverables)} file(s)\n"
+            f"[bold]WIP files:[/bold] {len(wip_files)} file(s)",
+            title="[bold yellow]Decommission Preview[/bold yellow]",
+            border_style="yellow",
+        ))
+
+        if deliverables:
+            console.print("\n[bold]Deliverables (will be archived or deleted):[/bold]")
+            for f in deliverables:
+                console.print(f"  [dim]{f.relative_to(Path(workspace_root))}[/dim]")
+        if wip_files:
+            console.print("\n[bold]WIP files (will always be deleted):[/bold]")
+            for f in wip_files:
+                console.print(f"  [dim]{f.relative_to(Path(workspace_root))}[/dim]")
+        console.print()
+
+    if not force:
+        action = "archive deliverables + delete WIP" if archive else "delete all files"
+        confirmed = typer.confirm(
+            f"Decommission '{title}' ({action}) and remove from org chart?",
+            default=False,
+        )
+        if not confirmed:
+            console.print("[dim]Cancelled.[/dim]")
+            raise typer.Exit(0)
+
+    # Handle files
+    if dept_path.exists() and files:
+        if archive and deliverables:
+            archive_dir = Path(workspace_root) / "shared" / "archive" / dept_slug
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            for f in deliverables:
+                dest = archive_dir / f.relative_to(dept_path)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(f), str(dest))
+            console.print(f"[green]Archived {len(deliverables)} deliverable(s) → shared/archive/{dept_slug}/[/green]")
+
+        # Delete dept folder (WIP already gone if archived, otherwise delete everything)
+        shutil.rmtree(str(dept_path))
+        console.print(f"[green]Deleted folder: {dept_slug}/[/green]")
+
+    # Remove from org chart in DB
+    async def _remove() -> bool:
+        from dri.storage.database import get_session
+        from dri.storage.repositories import PersistentCompanyRepository
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            removed = await repo.remove_department(cid, title)
+        return removed
+
+    removed = asyncio.run(_remove())
+    if removed:
+        console.print(f"[green]'{title}' removed from org chart.[/green]")
+    else:
+        console.print(f"[yellow]Warning: '{title}' not found in org chart (may have been renamed).[/yellow]")
+
+    console.print()
+    console.print(Panel(
+        f"[bold green]{title}[/bold green] has been decommissioned.\n"
+        + (f"Deliverables archived in [dim]shared/archive/{dept_slug}/[/dim]" if archive and files else "")
+        + ("\nThe company continues with the remaining departments." if removed else ""),
+        border_style="green",
+    ))
+
+
 @app.command()
 def sessions() -> None:
     """List all past sessions."""
