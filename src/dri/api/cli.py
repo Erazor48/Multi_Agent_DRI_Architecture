@@ -217,65 +217,59 @@ def company_chat(
     company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
 ) -> None:
     """Start an interactive session with your company CEO."""
-    async def _resolve_id() -> str:
+
+    async def _session() -> None:
         from dri.storage.database import init_db, get_session
         from dri.storage.repositories import PersistentCompanyRepository
+        from dri.orchestration.company_executor import CompanyExecutor
+
         await init_db()
         async with get_session() as db:
             repo = PersistentCompanyRepository(db)
-            if company_id:
-                c = await repo.get(company_id)
-            else:
-                c = await repo.get_latest()
+            c = await repo.get(company_id) if company_id else await repo.get_latest()
+
         if c is None:
-            raise ValueError("No company found. Use [bold]dri company create[/bold] first.")
-        return c.id, c.name  # type: ignore[return-value]
+            console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
+            return
 
-    try:
-        cid, cname = asyncio.run(_resolve_id())
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
-        raise typer.Exit(1)
+        cid, cname = c.id, c.name
 
-    console.print()
-    console.print(Panel(
-        f"[bold blue]{cname}[/bold blue]\n[dim]Type your message. [bold]/quit[/bold] to exit.[/dim]",
-        border_style="blue",
-    ))
-    console.print()
+        console.print()
+        console.print(Panel(
+            f"[bold blue]{cname}[/bold blue]\n[dim]Type your message. [bold]/quit[/bold] to exit.[/dim]",
+            border_style="blue",
+        ))
+        console.print()
 
-    while True:
-        try:
-            user_input = typer.prompt("[green]You[/green]")
-        except (KeyboardInterrupt, EOFError):
-            break
-        if user_input.strip().lower() in ("/quit", "/exit", "exit", "quit"):
-            break
-        if not user_input.strip():
-            continue
-
-        status_ref: list[str] = ["CEO is thinking..."]
-
-        with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console, transient=True) as p:
-            task_id = p.add_task(status_ref[0], total=None)
-
-            async def _chat() -> str:
-                from dri.orchestration.company_executor import CompanyExecutor
-                def _upd(m: str) -> None:
-                    status_ref[0] = m
-                    p.update(task_id, description=m)
-                return await CompanyExecutor.chat(cid, user_input, on_status=_upd)
-
+        while True:
             try:
-                reply = asyncio.run(_chat())
-            except Exception as e:
-                console.print(f"[red]Error: {e}[/red]")
+                user_input = await asyncio.to_thread(console.input, "[green]You[/green]: ")
+            except (KeyboardInterrupt, EOFError):
+                break
+
+            if user_input.strip().lower() in ("/quit", "/exit", "exit", "quit"):
+                break
+            if not user_input.strip():
                 continue
 
-        console.print()
-        console.print(f"[bold blue]{cname} CEO[/bold blue]")
-        console.print(Markdown(reply))
-        console.print()
+            with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console, transient=True) as p:
+                progress_task = p.add_task("CEO is thinking...", total=None)
+
+                def _upd(m: str) -> None:
+                    p.update(progress_task, description=m)
+
+                try:
+                    reply = await CompanyExecutor.chat(cid, user_input, on_status=_upd)
+                except Exception as e:
+                    console.print(f"[red]Error: {e}[/red]")
+                    continue
+
+            console.print()
+            console.print(f"[bold blue]{cname} CEO[/bold blue]")
+            console.print(Markdown(reply))
+            console.print()
+
+    asyncio.run(_session())
 
 
 @company_app.command("task")
