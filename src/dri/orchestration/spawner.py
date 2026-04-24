@@ -77,14 +77,14 @@ class Spawner:
             dept = self._slug(title)
             return [
                 WorkspacePermission(path=f"{dept}/", can_read=True, can_write=True, can_delete=True),
-                WorkspacePermission(path="shared/", can_read=True, can_write=True, can_delete=False),
+                WorkspacePermission(path="shared/", can_read=True, can_write=True, can_delete=True),
                 WorkspacePermission(path="", can_read=True, can_write=False, can_delete=False),
             ]
         # WORKER — dept derived from parent manager's title
         dept = self._slug(parent_title)
         return [
             WorkspacePermission(path=f"{dept}/", can_read=True, can_write=True, can_delete=True),
-            WorkspacePermission(path="shared/", can_read=True, can_write=True, can_delete=False),
+            WorkspacePermission(path="shared/", can_read=True, can_write=True, can_delete=True),
             WorkspacePermission(path="", can_read=True, can_write=False, can_delete=False),
         ]
 

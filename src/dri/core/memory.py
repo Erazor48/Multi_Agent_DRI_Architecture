@@ -114,6 +114,26 @@ class ContextPacket:
             "(e.g. `shared/startup_data.csv`, `marketing/report.md`)."
         )
 
+        lines.append("\n## File Lifecycle Rules\n")
+        lines.append(
+            "Files in the workspace are the company's source of truth. Keep them clean and current.\n\n"
+            "**When to delete a file:**\n"
+            "- It has been superseded by a newer version (the new file exists and is complete).\n"
+            "- It contains a draft or intermediate output and the final version is saved.\n"
+            "- Its content contradicts the current company direction and no longer applies.\n"
+            "- It was a working note or temp file with no lasting value.\n\n"
+            "**When NOT to delete a file:**\n"
+            "- Files owned by another department (you can read them, not delete them).\n"
+            "- A file that is the only record of important context, even if outdated "
+            "(update it instead of deleting).\n\n"
+            "**How to delete properly:**\n"
+            "- Use `file_delete` — never just tell others to 'ignore' a file.\n"
+            "- If a file is partially still relevant, overwrite it with the updated content "
+            "using `file_write` instead of deleting.\n"
+            "- In your report, list every file deleted with its path and the reason "
+            "(e.g. `deleted shared/old_plan.md — superseded by shared/plan_v2.md`)."
+        )
+
         return "\n".join(lines)
 
 
