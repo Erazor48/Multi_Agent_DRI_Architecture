@@ -227,12 +227,21 @@ class BaseAgent(ABC):
 
         return final_text or "Maximum tool call rounds reached."
 
+    _FILE_TOOLS = {"file_read", "file_write", "file_list", "file_delete"}
+
     async def _execute_tool(self, tool_call: Any, task_id: str) -> dict[str, Any]:
         """Execute one tool call, log it, and return a result dict."""
         call_id = str(uuid.uuid4())
         tool_name = tool_call.name
-        tool_input = tool_call.input or {}
+        tool_input = dict(tool_call.input or {})
         start = time.time()
+
+        # Inject workspace context into file tools
+        if tool_name in self._FILE_TOOLS and self._ctx.workspace_root:
+            tool_input["_workspace_root"] = self._ctx.workspace_root
+            tool_input["_permissions"] = [
+                p.model_dump() for p in self._ctx.workspace_permissions
+            ]
 
         try:
             tool = ToolRegistry.get(tool_name)

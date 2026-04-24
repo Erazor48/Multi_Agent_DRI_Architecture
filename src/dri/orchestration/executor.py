@@ -32,7 +32,7 @@ class Executor:
     Wires the full system for one user session and runs it to completion.
     """
 
-    async def run(self, pitch: str, on_status: "Callable[[str], None] | None" = None) -> str:  # type: ignore[name-defined]
+    async def run(self, pitch: str, on_status: "Callable[[str], None] | None" = None, workspace_root: str = "") -> str:  # type: ignore[name-defined]
         """
         Entry point: receive user pitch, return final CEO report.
         on_status: optional callback called with progress messages.
@@ -98,6 +98,7 @@ class Executor:
             registry=registry,
             bus=bus,
             budget_manager=budget_manager,
+            workspace_root=workspace_root,
         )
 
         # ── Build root context packet ─────────────────────────

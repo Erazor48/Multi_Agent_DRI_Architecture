@@ -116,7 +116,17 @@ class CompanyExecutor:
             repo = PersistentCompanyRepository(db)
             await repo.create(company)
 
-        _notify(f"Company '{company.name}' created.")
+        # Create workspace directory structure
+        import re
+        slug = re.sub(r"[^a-z0-9]+", "-", company.name.lower()).strip("-")
+        workspace_root = settings.workspace_dir / slug
+        (workspace_root / "shared").mkdir(parents=True, exist_ok=True)
+        (workspace_root / "ceo").mkdir(parents=True, exist_ok=True)
+        for dept in company.org_structure:
+            dept_slug = re.sub(r"[^a-z0-9]+", "-", dept.get("title", "dept").lower()).strip("-")
+            (workspace_root / dept_slug).mkdir(parents=True, exist_ok=True)
+
+        _notify(f"Company '{company.name}' created. Workspace: {workspace_root}")
         return company
 
     @staticmethod
@@ -209,6 +219,10 @@ class CompanyExecutor:
         if company is None:
             raise ValueError(f"Company {company_id} not found.")
 
+        import re
+        slug = re.sub(r"[^a-z0-9]+", "-", company.name.lower()).strip("-")
+        workspace_root = str(settings.workspace_dir / slug)
+
         scoped_pitch = (
             f"You are a specialized task force working for **{company.name}**.\n"
             f"Company vision: {company.vision}\n\n"
@@ -217,7 +231,7 @@ class CompanyExecutor:
 
         from dri.orchestration.executor import Executor
         executor = Executor()
-        return await executor.run(scoped_pitch, on_status=on_status)
+        return await executor.run(scoped_pitch, on_status=on_status, workspace_root=workspace_root)
 
 
 async def _ceo_loop(
@@ -252,12 +266,15 @@ async def _ceo_loop(
                 task_desc = tc.input.get("task_description", "")
                 on_status(f"Spawning team: {task_desc[:60]}...")
 
+                import re as _re
+                _slug = _re.sub(r"[^a-z0-9]+", "-", company.name.lower()).strip("-")
+                _ws = str(settings.workspace_dir / _slug)
                 scoped_pitch = (
                     f"Task force for **{company.name}** (vision: {company.vision}).\n\n"
                     f"Mission: {task_desc}"
                 )
                 from dri.orchestration.executor import Executor
-                result = await Executor().run(scoped_pitch, on_status=on_status)
+                result = await Executor().run(scoped_pitch, on_status=on_status, workspace_root=_ws)
                 tool_results.append({
                     "type": "tool_result",
                     "tool_call_id": tc.id,

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from dri.core.models import AgentConfig, AgentRole, Skill, Task
+from dri.core.models import AgentConfig, AgentRole, Skill, Task, WorkspacePermission
 
 
 @dataclass
@@ -32,9 +32,11 @@ class ContextPacket:
     model: str = ""
     company_name: str = ""
     company_pitch: str = ""
-    prior_results: list[str] = field(default_factory=list)  # relevant completed task results
-    constraints: list[str] = field(default_factory=list)    # rules injected by parent
+    prior_results: list[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+    workspace_root: str = ""                                         # absolute path to company workspace
+    workspace_permissions: list[WorkspacePermission] = field(default_factory=list)
 
     def to_system_prompt(self) -> str:
         """
@@ -70,6 +72,22 @@ class ContextPacket:
             lines.append("\n## Available Tools\n")
             lines.append(", ".join(self.allowed_tools))
 
+        if self.workspace_root:
+            lines.append("\n## Workspace\n")
+            lines.append(f"Company workspace root: `{self.workspace_root}`")
+            writable = [p for p in self.workspace_permissions if p.can_write]
+            readable = [p for p in self.workspace_permissions if p.can_read and not p.can_write]
+            if writable:
+                paths = ", ".join(f"`{p.path or '(entire workspace)'}`" for p in writable)
+                lines.append(f"You can **write** to: {paths}")
+            if readable:
+                paths = ", ".join(f"`{p.path or '(entire workspace)'}`" for p in readable)
+                lines.append(f"You can **read** from: {paths}")
+            lines.append(
+                "Always save deliverables, reports, and outputs as files in your writable paths. "
+                "Use paths relative to the workspace root (e.g. `marketing/report.md`)."
+            )
+
         lines.append("\n## Operating Rules\n")
         lines.append(
             "- Focus exclusively on your assigned task. Do not scope-creep into other areas.\n"
@@ -97,6 +115,8 @@ class ContextBuilder:
         company_pitch: str,
         prior_results: list[str] | None = None,
         constraints: list[str] | None = None,
+        workspace_root: str = "",
+        workspace_permissions: list[WorkspacePermission] | None = None,
     ) -> ContextPacket:
         return ContextPacket(
             agent_id=child_config.id,
@@ -113,6 +133,8 @@ class ContextBuilder:
             prior_results=prior_results or [],
             constraints=constraints or [],
             metadata=dict(child_config.metadata),
+            workspace_root=workspace_root,
+            workspace_permissions=workspace_permissions or [],
         )
 
     @staticmethod

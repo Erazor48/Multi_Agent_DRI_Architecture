@@ -267,6 +267,20 @@ class OrgChart(BaseModel):
 
 
 # ──────────────────────────────────────────────────────────────
+# Workspace permissions
+# ──────────────────────────────────────────────────────────────
+
+
+class WorkspacePermission(BaseModel):
+    """Access rule for one path inside an agent's company workspace."""
+
+    path: str = ""          # relative to company workspace root; "" = entire root
+    can_read: bool = True
+    can_write: bool = False
+    can_delete: bool = False
+
+
+# ──────────────────────────────────────────────────────────────
 # Persistent Company
 # ──────────────────────────────────────────────────────────────
 

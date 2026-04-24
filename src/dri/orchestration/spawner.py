@@ -17,6 +17,8 @@ from dri.config.settings import settings
 from dri.core.budget import BudgetManager
 from dri.core.communication import CommunicationBus
 from dri.core.memory import ContextBuilder, ContextPacket
+import re
+
 from dri.core.models import (
     AgentConfig,
     AgentRole,
@@ -24,6 +26,7 @@ from dri.core.models import (
     AgentStatus,
     BudgetAllocation,
     SpawnRequest,
+    WorkspacePermission,
 )
 from dri.core.registry import AgentRegistry
 from dri.storage.database import get_session
@@ -48,6 +51,7 @@ class Spawner:
         registry: AgentRegistry,
         bus: CommunicationBus,
         budget_manager: BudgetManager,
+        workspace_root: str = "",
     ) -> None:
         self._session_id = session_id
         self._company_name = company_name
@@ -55,6 +59,33 @@ class Spawner:
         self._registry = registry
         self._bus = bus
         self._budget_manager = budget_manager
+        self._workspace_root = workspace_root
+
+    @staticmethod
+    def _slug(name: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+
+    def _workspace_permissions(
+        self, role: AgentRole, title: str, parent_title: str
+    ) -> list[WorkspacePermission]:
+        """Return the workspace permission list for an agent based on its role."""
+        if not self._workspace_root:
+            return []
+        if role == AgentRole.ROOT:
+            return [WorkspacePermission(path="", can_read=True, can_write=True, can_delete=True)]
+        if role == AgentRole.MANAGER:
+            dept = self._slug(title)
+            return [
+                WorkspacePermission(path=f"{dept}/", can_read=True, can_write=True, can_delete=True),
+                WorkspacePermission(path="shared/", can_read=True, can_write=True, can_delete=False),
+                WorkspacePermission(path="", can_read=True, can_write=False, can_delete=False),
+            ]
+        # WORKER — dept derived from parent manager's title
+        dept = self._slug(parent_title)
+        return [
+            WorkspacePermission(path=f"{dept}/", can_read=True, can_write=True, can_delete=False),
+            WorkspacePermission(path="shared/", can_read=True, can_write=False, can_delete=False),
+        ]
 
     async def spawn(
         self,
@@ -116,6 +147,7 @@ class Spawner:
 
         # ── Build context packet ──────────────────────────────
         config.metadata["parent_id"] = request.parent_id or ""
+        ws_perms = self._workspace_permissions(request.role, request.title, parent_title)
         context = ContextBuilder.build(
             child_config=config,
             parent_title=parent_title,
@@ -123,6 +155,8 @@ class Spawner:
             company_pitch=self._company_pitch,
             prior_results=prior_results,
             constraints=constraints,
+            workspace_root=self._workspace_root,
+            workspace_permissions=ws_perms,
         )
 
         # ── Instantiate correct class ─────────────────────────
