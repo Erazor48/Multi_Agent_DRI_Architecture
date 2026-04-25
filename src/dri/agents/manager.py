@@ -221,7 +221,11 @@ class ManagerAgent(BaseAgent):
                     f"## Synthesis Approach\n\n{approach}\n\n"
                     f"## Team Results\n\n{results_text}\n\n"
                     "Synthesize these results into a single, coherent, complete output. "
-                    "Your manager expects a professional, structured report — not a list of summaries."
+                    "Your manager expects a professional, structured report — not a list of summaries.\n\n"
+                    "If any team member was INTERRUPTED: acknowledge it explicitly, state what was "
+                    "completed vs incomplete, list any files they left on disk, and recommend a "
+                    "concrete next action (retry with narrower scope / reassign remaining work / "
+                    "escalate). Do not silently skip failed subtasks."
                 ),
             }
         ]

@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import time
 import uuid
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from dri.config.settings import settings
@@ -99,6 +101,7 @@ class BaseAgent(ABC):
                 self._run_task(task),
                 timeout=settings.agent_timeout_seconds,
             )
+            self._cleanup_wip()
             await self._set_status(AgentStatus.DONE)
             alloc = self._budget_manager.get_allocation(self.agent_id)
             report = ReportMessage(
@@ -117,18 +120,21 @@ class BaseAgent(ABC):
             error = f"Agent {self._ctx.title} timed out after {settings.agent_timeout_seconds}s."
             await self._set_status(AgentStatus.FAILED, error=error)
             await self._persist_task_failed(task.id, error)
+            self._cleanup_wip()  # remove WIP first so inventory only shows deliverables
             return self._fail_report(task, error)
 
         except BudgetExceededError as e:
             error = str(e)
             await self._set_status(AgentStatus.FAILED, error=error)
             await self._persist_task_failed(task.id, error)
+            self._cleanup_wip()
             return self._fail_report(task, error)
 
         except Exception as e:
             error = f"{type(e).__name__}: {e}"
             await self._set_status(AgentStatus.FAILED, error=error)
             await self._persist_task_failed(task.id, error)
+            self._cleanup_wip()
             return self._fail_report(task, error)
 
         finally:
@@ -331,6 +337,32 @@ class BaseAgent(ABC):
         await self._bus.escalate(msg)
 
     # ──────────────────────────────────────────────────────────
+    # Workspace cleanup
+    # ──────────────────────────────────────────────────────────
+
+    def _cleanup_wip(self) -> None:
+        """
+        Hard guarantee: delete the agent's _wip/ subfolder after every task,
+        success or failure. This runs in the framework, not in the LLM —
+        the LLM cannot forget or skip it.
+
+        Finds the agent's own dept path as the first permission entry
+        that is specific (non-empty, not shared/, has write+delete rights).
+        """
+        if not self._ctx.workspace_root:
+            return
+        own_dept: str | None = None
+        for perm in self._ctx.workspace_permissions:
+            if perm.path and perm.path != "shared/" and perm.can_write and perm.can_delete:
+                own_dept = perm.path
+                break
+        if not own_dept:
+            return
+        wip_dir = Path(self._ctx.workspace_root) / own_dept.rstrip("/") / "_wip"
+        if wip_dir.exists() and wip_dir.is_dir():
+            shutil.rmtree(str(wip_dir), ignore_errors=True)
+
+    # ──────────────────────────────────────────────────────────
     # Status + persistence helpers
     # ──────────────────────────────────────────────────────────
 
@@ -351,14 +383,60 @@ class BaseAgent(ABC):
             task_repo = TaskRepository(db)
             await task_repo.fail(task_id, error)
 
+    def _inventory_dept_files(self) -> list[str]:
+        """List deliverable files left on disk in the agent's dept folder (after _wip/ is cleaned)."""
+        if not self._ctx.workspace_root:
+            return []
+        own_dept: str | None = None
+        for perm in self._ctx.workspace_permissions:
+            if perm.path and perm.path != "shared/" and perm.can_write and perm.can_delete:
+                own_dept = perm.path
+                break
+        if not own_dept:
+            return []
+        dept_dir = Path(self._ctx.workspace_root) / own_dept.rstrip("/")
+        if not dept_dir.exists():
+            return []
+        root = Path(self._ctx.workspace_root)
+        return sorted(
+            str(f.relative_to(root))
+            for f in dept_dir.rglob("*")
+            if f.is_file() and "_wip" not in f.parts
+        )
+
     def _fail_report(self, task: Task, error: str) -> ReportMessage:
+        files = self._inventory_dept_files()
+        alloc = self._budget_manager.get_allocation(self.agent_id)
+
+        lines = [
+            f"**{self._ctx.title} — INTERRUPTED**",
+            f"Reason: {error}",
+            "",
+        ]
+        if files:
+            lines.append("Files produced before interruption (deliverables kept on disk):")
+            for f in files:
+                lines.append(f"  - {f}")
+        else:
+            lines.append("No deliverable files were produced before interruption.")
+        lines += [
+            "",
+            f"Incomplete task: {task.description[:300]}",
+            "",
+            "Recommended actions for N+1:",
+            "  - Retry with a narrower scope using the files above as prior context.",
+            "  - Reassign only the remaining work to a new agent.",
+            "  - Escalate to CEO if this blocks the team's overall objective.",
+        ]
+
+        result = "\n".join(lines)
         return ReportMessage(
             from_agent=self.agent_id,
             to_agent=task.delegated_by,
             task_id=task.id,
-            result="",
+            result=result,
             status=TaskStatus.FAILED,
-            tokens_used=0,
+            tokens_used=alloc.used if alloc else 0,
             child_agent_id=self.agent_id,
             issues=[error],
         )
