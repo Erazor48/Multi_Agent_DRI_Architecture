@@ -1,8 +1,8 @@
 # DRI Multi-Agent Architecture — CLAUDE.md
 
 > **For any new agent taking over this project:** This file is your single source of truth.
-> Read it entirely before touching any code. It contains the full vision, all decisions made,
-> current state, and next steps. Never start from zero.
+> Read it **entirely** before touching any code. It reflects the exact state of the codebase
+> as of 2026-04-26. Never start from zero — everything is here.
 
 ---
 
@@ -12,7 +12,7 @@ A platform where a user pitches any business idea to a root AI agent (the CEO), 
 hierarchical multi-agent "company" self-organizes from scratch. The system is general-purpose:
 it can create and run any type of company, fully autonomously.
 
-The user only ever speaks to the root agent. Everything else is handled by the agent hierarchy.
+The user only ever speaks to the root agent (CEO). Everything else is handled by the hierarchy.
 
 ---
 
@@ -23,7 +23,7 @@ The user only ever speaks to the root agent. Everything else is handled by the a
 3. **Parent owns children**: the parent creates, configures, monitors, and if necessary removes its children.
 4. **Context injection**: the parent decides what context (skills, constraints, budget) to pass to each child — the child has no global awareness.
 5. **No shortcuts**: functional correctness and security over speed of implementation.
-6. **One change = one place**: no logic duplication, strict DRY, SOLID principles throughout.
+6. **One change = one place**: no logic duplication, strict DRY, SOLID throughout.
 
 ---
 
@@ -32,14 +32,18 @@ The user only ever speaks to the root agent. Everything else is handled by the a
 | Decision | Choice | Reason |
 |---|---|---|
 | LLM provider | Anthropic Claude (claude-sonnet-4-6 default) | Best reasoning, tool use, caching |
-| Orchestration | LangGraph | State management, Send API for parallelism, checkpointing |
+| Orchestration | Pure asyncio + Spawner pattern | LangGraph was the original plan but **not implemented** — actual orchestration is asyncio-based (see Note below) |
 | Async runtime | Python asyncio | True parallelism for concurrent agent branches |
 | Persistence | SQLAlchemy 2.0 async + SQLite (swappable to PostgreSQL) | Lightweight local-first, production-ready path |
 | Data validation | Pydantic v2 | Schema enforcement at all boundaries |
-| CLI | Rich | Beautiful, professional terminal UI |
+| CLI | Rich + Typer | Beautiful, professional terminal UI |
 | Python version | 3.12+ | Latest stable, best asyncio support |
 | Config | Pydantic Settings + .env | Twelve-factor app, user-configurable |
 | Testing | pytest + pytest-asyncio | Standard, works with async |
+
+> **Note on LangGraph:** `src/dri/orchestration/graph.py` exists as a skeleton but LangGraph
+> is **not used** in the actual execution path. All orchestration is done via `Spawner` +
+> `asyncio.gather`. Do not add LangGraph dependencies without discussing with the user first.
 
 ---
 
@@ -47,53 +51,57 @@ The user only ever speaks to the root agent. Everything else is handled by the a
 
 ```
 Multi_Agent_DRI_Architecture/
-├── CLAUDE.md                        ← YOU ARE HERE
-├── pyproject.toml                   ← deps + project metadata
-├── .env.example                     ← all configurable params
-├── .env                             ← user's local config (gitignored)
+├── CLAUDE.md                              ← YOU ARE HERE
+├── pyproject.toml                         ← deps + project metadata
+├── .env.example                           ← all configurable params
+├── .env                                   ← user's local config (gitignored)
+├── docs/                                  ← personal docs, gitignored
+│   └── CLI/reference.md                  ← full CLI command reference
 ├── src/
 │   └── dri/
 │       ├── __init__.py
 │       ├── config/
 │       │   ├── __init__.py
-│       │   └── settings.py          ← Pydantic Settings singleton
+│       │   └── settings.py               ← Pydantic Settings singleton
 │       ├── core/
 │       │   ├── __init__.py
-│       │   ├── models.py            ← ALL domain models (Pydantic)
-│       │   ├── registry.py          ← Agent registry (org chart in memory + DB)
-│       │   ├── memory.py            ← Memory system (global + injection)
-│       │   ├── budget.py            ← Budget tracking + enforcement
-│       │   └── communication.py     ← Message protocol (delegate / report)
+│       │   ├── models.py                 ← ALL domain models (Pydantic)
+│       │   ├── registry.py               ← Agent registry (org chart in memory + DB)
+│       │   ├── memory.py                 ← ContextPacket builder + system prompt renderer
+│       │   ├── budget.py                 ← Budget tracking + enforcement
+│       │   └── communication.py          ← Message protocol (delegate / report / escalate)
 │       ├── storage/
 │       │   ├── __init__.py
-│       │   ├── database.py          ← SQLAlchemy async engine + session factory
-│       │   ├── orm.py               ← SQLAlchemy ORM models
-│       │   └── repositories.py      ← Repository pattern (all DB access here)
+│       │   ├── database.py               ← SQLAlchemy async engine + session factory
+│       │   ├── orm.py                    ← SQLAlchemy ORM models
+│       │   └── repositories.py           ← Repository pattern (all DB access here)
 │       ├── skills/
 │       │   ├── __init__.py
-│       │   ├── base.py              ← Skill base class
-│       │   ├── catalog.py           ← Built-in skill definitions
-│       │   └── registry.py          ← Runtime skill registry per agent
+│       │   ├── base.py                   ← Skill base class
+│       │   ├── catalog.py                ← Built-in skill definitions
+│       │   └── registry.py               ← Runtime skill registry per agent
 │       ├── tools/
-│       │   ├── __init__.py
-│       │   ├── base.py              ← Tool base class + global registry
-│       │   ├── web_search.py        ← Web search (via Tavily or Brave API)
-│       │   ├── code_exec.py         ← Sandboxed Python execution
-│       │   └── file_ops.py          ← File read/write/list
+│       │   ├── __init__.py               ← imports all tools to trigger registration
+│       │   ├── base.py                   ← BaseTool + ToolRegistry
+│       │   ├── web_search.py             ← Web search (Tavily or Brave API)
+│       │   ├── code_exec.py              ← Sandboxed Python execution
+│       │   ├── file_ops.py               ← file_read / file_write / file_list / file_delete
+│       │   └── external_actions.py       ← propose_external_action (approval system)
 │       ├── agents/
 │       │   ├── __init__.py
-│       │   ├── base.py              ← BaseAgent: lifecycle, LLM call, tool dispatch
-│       │   ├── root.py              ← RootAgent (CEO): user interface + org init
-│       │   ├── manager.py           ← ManagerAgent: spawn/supervise teams
-│       │   └── worker.py            ← WorkerAgent: leaf execution with tools
+│       │   ├── base.py                   ← BaseAgent: lifecycle, LLM, tools, interruption handling
+│       │   ├── root.py                   ← RootAgent (CEO): user interface + org design
+│       │   ├── manager.py                ← ManagerAgent: spawn/supervise/synthesize teams
+│       │   └── worker.py                 ← WorkerAgent: leaf execution with tools
 │       ├── orchestration/
 │       │   ├── __init__.py
-│       │   ├── graph.py             ← LangGraph team subgraph builder
-│       │   ├── spawner.py           ← Agent spawn protocol (parent → child)
-│       │   └── executor.py          ← Parallel execution + result aggregation
+│       │   ├── graph.py                  ← LangGraph skeleton (NOT used in execution path)
+│       │   ├── spawner.py                ← Agent spawn + RBAC permission assignment
+│       │   ├── executor.py               ← One-shot session bootstrap
+│       │   └── company_executor.py       ← Persistent company: create / chat / task
 │       └── api/
 │           ├── __init__.py
-│           └── cli.py               ← Rich CLI (user ↔ root agent)
+│           └── cli.py                    ← Rich CLI — all user-facing commands
 └── tests/
     ├── __init__.py
     ├── conftest.py
@@ -111,22 +119,165 @@ Multi_Agent_DRI_Architecture/
 User input
     │
     ▼
-RootAgent (CEO)
-    │   Analyzes pitch → decides org structure (LLM call with spawn_team tool)
+CompanyExecutor.chat()          ← persistent mode (main mode)
+    │
+    ▼
+CEO agentic loop
+    │   Strategic discussion → responds directly
+    │   Execution task → calls spawn_team tool
+    │
+    ▼
+Executor.run(pitch, workspace_root)
+    │
+    ▼
+RootAgent (task-force CEO)
+    │   designs org → calls design_company tool
     │
     ├──[parallel]──► ManagerAgent (CMO)
-    │                    │
-    │                    ├──[parallel]──► WorkerAgent (Instagram)
-    │                    └──[parallel]──► WorkerAgent (Content)
+    │                    │ plans team → calls create_org_plan tool
+    │                    ├──[parallel]──► WorkerAgent (SEO Specialist)
+    │                    └──[parallel]──► WorkerAgent (Content Writer)
     │
     └──[parallel]──► ManagerAgent (CTO)
-                         │
-                         └──[parallel]──► WorkerAgent (Backend)
-                                        ► WorkerAgent (Frontend)
+                         ├──[parallel]──► WorkerAgent (Backend Dev)
+                         └──[parallel]──► WorkerAgent (Data Engineer)
 
 Results bubble up:
-    worker.report() → manager aggregates → CEO synthesizes → User
+    worker._fail_report() or result → manager synthesizes → CEO synthesizes → User
+
+On interruption (timeout / budget / exception):
+    _cleanup_wip() → _inventory_dept_files() → structured _fail_report() → N+1
 ```
+
+---
+
+## Workspace & RBAC System
+
+Each persistent company has an isolated workspace at `workspace/<company-slug>/`.
+
+### Directory convention
+
+```
+workspace/momentum/
+├── shared/                        ← cross-team deliverables + pending approvals
+│   ├── _pending_approvals.json    ← external action queue (managed by approval system)
+│   └── archive/                   ← decommissioned dept deliverables
+│       └── chief-marketing-officer/
+├── chief-marketing-officer/
+│   ├── _wip/                      ← EPHEMERAL: deleted by framework after every task
+│   └── strategy.md                ← deliverable: persists
+├── chief-technology-officer/
+│   └── ...
+└── ...
+```
+
+### RBAC permissions (enforced by `file_ops.py` + `spawner.py`)
+
+| Role | Own dept folder | `shared/` | Other depts |
+|------|----------------|-----------|-------------|
+| ROOT | R + W + D | R + W + D | R + W + D |
+| MANAGER | R + W + D | R + W + D | Read only |
+| WORKER | R + W + D | R + W + D | Read only |
+
+### `_wip/` hard guarantee
+
+`BaseAgent._cleanup_wip()` is called by the **framework** (not the LLM) after every task
+completion or failure, before `_fail_report()`. This is unconditional — the LLM cannot
+skip or forget it. `_wip/` files never survive a task boundary.
+
+---
+
+## Tools System
+
+All tools registered in `ToolRegistry` at import time via `dri/tools/__init__.py`.
+
+| Tool | Description | Notes |
+|---|---|---|
+| `web_search` | Search the web | Requires TAVILY_API_KEY or BRAVE_API_KEY |
+| `code_exec` | Execute Python in sandboxed subprocess | |
+| `file_read` | Read a file from workspace | RBAC enforced |
+| `file_write` | Write/overwrite/append a file | RBAC enforced, creates parent dirs |
+| `file_list` | List files in a directory | RBAC enforced |
+| `file_delete` | Delete a single file | RBAC enforced |
+| `propose_external_action` | Queue a real-world action for founder approval | Does NOT execute — writes to `shared/_pending_approvals.json` |
+
+Tools are assigned to agents by their parent via `SpawnRequest.allowed_tools`.
+Managers describe available tools in `_ORG_PLAN_TOOL` when planning their team.
+
+---
+
+## External Action Approval System
+
+Agents **cannot** send emails, messages, or interact with the real world directly.
+When such an action is needed, the agent calls `propose_external_action`:
+
+1. Action is written to `shared/_pending_approvals.json` with full details (content,
+   recipient, rationale, which agent proposed it, timestamp).
+2. Agent reports upward: "Action #N pending founder approval."
+3. Founder reviews and decides via CLI.
+
+### CLI commands
+
+```bash
+dri company approvals list              # see pending actions
+dri company approvals show <N>          # read full content + rationale
+dri company approvals approve <N>       # approve (+ optional note)
+dri company approvals reject <N>        # reject (+ optional reason)
+```
+
+---
+
+## Agent Interruption Handling
+
+When an agent fails (timeout / budget exceeded / exception):
+
+1. `_cleanup_wip()` runs first — removes ephemeral files so inventory is clean.
+2. `_inventory_dept_files()` lists all deliverable files currently on disk.
+3. `_fail_report()` builds a structured report sent to N+1 containing:
+   - Reason for interruption
+   - List of files produced before interruption (kept on disk)
+   - The incomplete task description
+   - Three recommended actions: retry narrower / reassign remaining / escalate
+
+The N+1 manager's synthesis prompt explicitly handles failure sub-reports —
+it acknowledges the interruption, documents completed vs incomplete work,
+and proposes a concrete next action.
+
+---
+
+## Agent System Prompt — Mandatory Rules
+
+Every agent's system prompt (rendered by `ContextPacket.to_system_prompt()`) includes:
+
+### Integrity Rules
+- **Never fabricate** data, outcomes, or feedback. If you can't do something, say so.
+- **Use `propose_external_action`** for any real-world interaction.
+- **When you don't know something**, use `web_search` or escalate. Never invent.
+- **Mark hypotheticals** as `[EXAMPLE — NOT REAL DATA]`.
+- **Cite every file produced** in your report with its exact workspace-relative path.
+
+### File Lifecycle Rules
+- `<dept>/_wip/` → ephemeral working files. Delete before reporting done.
+- `<dept>/` root and `shared/` → deliverables. Only save final output here.
+- **Use `file_delete`** to remove obsolete files — never tell others to "ignore" a file.
+- **Cite every deletion** in your report: path + reason.
+- Do not delete files from another department's folder.
+
+---
+
+## Department Decommission
+
+```bash
+dri company decommission "Chief Marketing Officer"           # delete all
+dri company decommission "Chief Marketing Officer" --archive # move deliverables to shared/archive/
+dri company decommission "Chief Marketing Officer" --force   # skip confirmation
+```
+
+This command:
+1. Lists all files in the dept folder (deliverables vs `_wip/`)
+2. Archives or deletes based on `--archive` flag
+3. Removes the department from `org_structure` in DB
+4. Removes the dept folder
 
 ---
 
@@ -136,192 +287,16 @@ Key types (all Pydantic v2):
 
 - `AgentRole`: Enum — ROOT, MANAGER, WORKER
 - `AgentStatus`: Enum — INITIALIZING, ACTIVE, WAITING, DONE, FAILED
-- `AgentConfig`: id, role, mission, parent_id, skills, budget_tokens, model
+- `AgentConfig`: id, role, title, mission, parent_id, depth, skills, allowed_tools, budget, model
 - `AgentState`: mutable runtime state for an agent
-- `Message`: typed envelope for all inter-agent communication
-- `DelegateMessage`: parent → child (task + context)
-- `ReportMessage`: child → parent (result + status + issues)
-- `SpawnRequest`: what a parent sends to spawner to create a child
-- `Skill`: name, description, instructions (injected into agent system prompt)
+- `Message` / `DelegateMessage` / `ReportMessage` / `EscalateMessage`: typed message envelopes
+- `SpawnRequest`: what a parent sends to Spawner to create a child
+- `WorkspacePermission`: path + can_read + can_write + can_delete
+- `Skill`: name, description, instructions, required_tools
 - `Task`: id, description, assigned_to, status, result
 - `BudgetAllocation`: total, used, remaining per agent
-- `OrgNode`: node in the org chart tree (for registry)
-
----
-
-## Memory Architecture
-
-Three layers, strictly separated:
-
-1. **Global Store (SQLite)**: org chart, all agents, all tasks, all results. Source of truth.
-2. **Context Injection (runtime)**: when parent spawns child, it builds a `ContextPacket`
-   containing only what the child needs: its role, mission, skills, budget, and any
-   relevant prior results. Child has NO other global access.
-3. **Working Memory (prompt)**: the current conversation/task in the agent's active LLM call.
-   This is ephemeral and lives only for the duration of one task execution.
-
----
-
-## Budget System
-
-- Configured in `.env`: `BUDGET_MAX_TOKENS_PER_SESSION` (default: 2_000_000)
-- Root agent gets the full budget at session start
-- When spawning a child, parent allocates a share (configurable, defaults to proportional split)
-- Each LLM call deducts from the agent's budget
-- If budget < threshold: agent reports to parent before calling LLM
-- Parent can reallocate, continue, or terminate branch
-- All budget state persisted to DB for auditability
-
----
-
-## Communication Protocol
-
-Strictly hierarchical — no lateral communication:
-
-- **Delegate** (parent → child): `DelegateMessage(task, context, budget)`
-- **Report** (child → parent): `ReportMessage(task_id, result, status, tokens_used, issues)`
-- **Spawn** (manager internal): manager calls `Spawner.spawn(SpawnRequest)` to create children
-- **Escalate** (child → parent, unplanned): used when child hits blockers or needs more budget
-
-All messages are typed, validated, logged to DB.
-
----
-
-## Agent Lifecycle
-
-```
-INITIALIZING → ACTIVE → [WAITING for children] → DONE
-                    └──────────────────────────► FAILED
-```
-
-- `INITIALIZING`: agent config received, system prompt built by parent's context
-- `ACTIVE`: executing its task (making LLM calls, using tools)
-- `WAITING`: has spawned children, aggregating their results
-- `DONE`: result reported to parent, agent archived
-- `FAILED`: error reported to parent, parent decides action
-
----
-
-## LangGraph Pattern
-
-Each "team" (manager + its workers) is a compiled `StateGraph`:
-
-```python
-team_graph = StateGraph(TeamState)
-team_graph.add_node("supervisor", supervisor_node)   # manager logic
-team_graph.add_node("worker", worker_node)            # worker logic
-# supervisor uses Send API for parallel workers:
-# return [Send("worker", {...}) for task in tasks]
-team_graph.add_conditional_edges("supervisor", route, {END: END, "worker": "worker"})
-team_graph.add_edge("worker", "supervisor")           # results back to supervisor
-```
-
-Unlimited depth: manager nodes can invoke new team_graph runs via tool calls (recursive).
-
----
-
-## Skills System
-
-Skills are structured instructions injected into an agent's system prompt by its parent.
-They are NOT code — they are natural language capability descriptors with structured metadata.
-
-```python
-class Skill(BaseModel):
-    name: str
-    description: str          # what this skill enables
-    instructions: str         # how to use this skill (injected verbatim into system prompt)
-    required_tools: list[str] # tools needed for this skill
-```
-
-Parent builds child's skill set based on the child's role and current company needs.
-Skills can be added or revoked by the parent at any time (new context injection).
-
----
-
-## Tools System
-
-Tools are actual executable capabilities (not just prompt instructions):
-
-| Tool | Description |
-|---|---|
-| `web_search` | Search the web (Tavily API or Brave API) |
-| `code_exec` | Execute Python in a sandboxed subprocess |
-| `file_read` | Read file from workspace |
-| `file_write` | Write file to workspace |
-| `file_list` | List files in workspace |
-
-Tools are registered globally and assigned to agents by their parent (via SpawnRequest).
-Each tool is a Pydantic model with an async `execute()` method.
-All tool calls are logged to DB with input, output, duration, and token cost.
-
----
-
-## Configuration (.env)
-
-```
-# LLM
-ANTHROPIC_API_KEY=your_key_here
-DEFAULT_MODEL=claude-sonnet-4-6
-ROOT_MODEL=claude-sonnet-4-6
-
-# Budget
-BUDGET_MAX_TOKENS_PER_SESSION=2000000
-BUDGET_WARNING_THRESHOLD=0.2     # warn parent at 20% remaining
-BUDGET_CHILD_DEFAULT_SHARE=0.4   # each child gets 40% of parent's budget
-
-# Tools
-TAVILY_API_KEY=optional_for_web_search
-BRAVE_API_KEY=optional_for_web_search
-
-# Storage
-DATABASE_URL=sqlite+aiosqlite:///./dri_company.db
-
-# Workspace
-WORKSPACE_DIR=./workspace        # where agents write files
-
-# Orchestration
-MAX_CONCURRENT_AGENTS=20         # global cap on parallel agents
-MAX_SPAWN_DEPTH=10               # max hierarchy depth
-AGENT_TIMEOUT_SECONDS=300        # per-agent task timeout
-```
-
----
-
-## Current Implementation State
-
-### Completed (all as of 2026-04-22)
-- [x] CLAUDE.md
-- [x] pyproject.toml
-- [x] .env.example
-- [x] src/dri/config/settings.py
-- [x] src/dri/core/models.py
-- [x] src/dri/storage/database.py
-- [x] src/dri/storage/orm.py
-- [x] src/dri/storage/repositories.py
-- [x] src/dri/core/registry.py
-- [x] src/dri/core/memory.py
-- [x] src/dri/core/budget.py
-- [x] src/dri/core/communication.py
-- [x] src/dri/skills/base.py
-- [x] src/dri/skills/catalog.py
-- [x] src/dri/skills/registry.py
-- [x] src/dri/tools/base.py + __init__.py
-- [x] src/dri/tools/web_search.py
-- [x] src/dri/tools/code_exec.py
-- [x] src/dri/tools/file_ops.py
-- [x] src/dri/agents/base.py
-- [x] src/dri/agents/root.py
-- [x] src/dri/agents/manager.py
-- [x] src/dri/agents/worker.py
-- [x] src/dri/orchestration/graph.py
-- [x] src/dri/orchestration/spawner.py
-- [x] src/dri/orchestration/executor.py
-- [x] src/dri/api/cli.py
-- [x] tests/unit/ (models, budget, memory, tools, registry)
-
-### Pending
-- [ ] tests/integration/ — full end-to-end pitch test (requires ANTHROPIC_API_KEY)
-- [ ] Next.js frontend (optional, post-MVP)
+- `PersistentCompany`: id, name, vision, pitch, org_structure, status
+- `CompanyMessage`: id, company_id, role (user/ceo), content
 
 ---
 
@@ -329,52 +304,130 @@ AGENT_TIMEOUT_SECONDS=300        # per-agent task timeout
 
 1. **No agent accesses global state directly** — all state goes through the Repository layer.
 2. **No lateral communication** — agents only talk to parent or children, never siblings.
-3. **All LLM calls go through BaseAgent._call_llm()** — this ensures budget tracking, logging, and prompt caching.
+3. **All LLM calls go through `BaseAgent._call_llm()`** — budget tracking, logging, caching.
 4. **All DB access goes through repositories** — never use ORM models directly in business logic.
 5. **All tool calls are async** — never block the event loop.
-6. **Parent always outlives children** — a parent cannot be marked DONE until all children are DONE or FAILED.
-7. **Budget is always checked before LLM calls** — `BudgetManager.check_and_deduct()` is called in `BaseAgent._call_llm()`.
+6. **Parent always outlives children** — cannot be DONE until all children are DONE or FAILED.
+7. **Budget is always checked before LLM calls** — `BudgetManager.check_and_deduct()` in `_call_llm()`.
+8. **`_cleanup_wip()` always runs** — called by framework in `run()` on success and failure alike.
+9. **No agent invents data** — Integrity Rules are in every system prompt; violations are a bug.
+10. **No real-world action without approval** — `propose_external_action` is the only path.
+
+---
+
+## CLI — Complete Command Reference
+
+```bash
+# One-shot session (no persistence)
+uv run dri run
+uv run dri run --pitch "My idea" --budget 500000
+
+# Session history
+uv run dri sessions
+
+# Persistent company
+uv run dri company create --pitch "My idea"
+uv run dri company list
+uv run dri company chat --id <ID>
+uv run dri company task --task "Produce a market analysis report"
+uv run dri company decommission "Chief Marketing Officer" --archive
+
+# External action approvals
+uv run dri company approvals list
+uv run dri company approvals list --all          # include decided actions
+uv run dri company approvals show <N>
+uv run dri company approvals approve <N> --note "OK"
+uv run dri company approvals reject <N> --note "Reformulate first"
+```
+
+Full reference: `docs/CLI/reference.md`
+
+---
+
+## Configuration (.env)
+
+```
+ANTHROPIC_API_KEY=your_key_here          # required
+DEFAULT_MODEL=claude-sonnet-4-6
+ROOT_MODEL=claude-sonnet-4-6
+BUDGET_MAX_TOKENS_PER_SESSION=2000000
+BUDGET_WARNING_THRESHOLD=0.2
+BUDGET_CHILD_DEFAULT_SHARE=0.4
+TAVILY_API_KEY=optional
+BRAVE_API_KEY=optional
+DATABASE_URL=sqlite+aiosqlite:///./dri_company.db
+WORKSPACE_DIR=./workspace
+MAX_CONCURRENT_AGENTS=20
+MAX_SPAWN_DEPTH=10
+AGENT_TIMEOUT_SECONDS=300
+```
 
 ---
 
 ## How to Run
 
 ```bash
-# Install (uses uv — the project's package manager)
-uv sync
-
-# Or install with dev deps for tests:
-uv sync --extra dev
-
-# Copy and configure environment
-cp .env.example .env
-# Edit .env: set ANTHROPIC_API_KEY at minimum
-
-# Run the CLI
-uv run dri run
-
-# Or with a pre-set pitch:
-uv run dri run --pitch "A SaaS platform for restaurant inventory management"
-
-# Run tests:
-uv run pytest
-
-# List past sessions:
-uv run dri sessions
+uv sync                  # install deps
+uv sync --extra dev      # with test deps
+cp .env.example .env     # configure (set ANTHROPIC_API_KEY at minimum)
+uv run dri run           # one-shot mode
+uv run dri company create && uv run dri company chat   # persistent mode
+uv run pytest            # run tests
 ```
 
-## Package Manager
+**Always use `uv`**, never `pip`.
 
-**Always use `uv`**, never `pip`. The user has `uv` configured globally.
-Frontend (if needed): Next.js. Rich CLI is the MVP interface.
+---
+
+## Current Implementation State (as of 2026-04-26)
+
+### Completed
+- [x] CLAUDE.md
+- [x] pyproject.toml
+- [x] .env.example
+- [x] src/dri/config/settings.py
+- [x] src/dri/core/models.py
+- [x] src/dri/core/registry.py
+- [x] src/dri/core/memory.py — ContextPacket + system prompt with integrity + file lifecycle rules
+- [x] src/dri/core/budget.py
+- [x] src/dri/core/communication.py
+- [x] src/dri/storage/database.py
+- [x] src/dri/storage/orm.py
+- [x] src/dri/storage/repositories.py — includes `remove_department`
+- [x] src/dri/skills/base.py + catalog.py + registry.py
+- [x] src/dri/tools/base.py + __init__.py
+- [x] src/dri/tools/web_search.py
+- [x] src/dri/tools/code_exec.py
+- [x] src/dri/tools/file_ops.py — file_read / file_write / file_list / file_delete + RBAC
+- [x] src/dri/tools/external_actions.py — propose_external_action
+- [x] src/dri/agents/base.py — _cleanup_wip / _inventory_dept_files / _fail_report enriched
+- [x] src/dri/agents/root.py
+- [x] src/dri/agents/manager.py — synthesis handles interruption reports
+- [x] src/dri/agents/worker.py
+- [x] src/dri/orchestration/spawner.py — RBAC permissions
+- [x] src/dri/orchestration/executor.py
+- [x] src/dri/orchestration/company_executor.py — persistent company mode
+- [x] src/dri/api/cli.py — all commands including approvals + decommission
+- [x] tests/unit/ (models, budget, memory, tools, registry)
+
+### Pending
+- [ ] tests/integration/ — full end-to-end pitch test (requires ANTHROPIC_API_KEY)
+- [ ] Real execution of approved external actions (email/LinkedIn integrations)
+- [ ] Next.js frontend (optional, post-MVP)
 
 ---
 
 ## Notes for the Next Agent
 
-- Check `## Current Implementation State` above to know where we left off.
-- Always mark files as completed in that checklist when done.
-- Never duplicate logic — if something exists in core/, use it everywhere.
-- The `settings.py` singleton is imported as `from dri.config.settings import settings` — never read env vars directly elsewhere.
-- All async functions use `async def` — no mixing of sync/async without `asyncio.to_thread()`.
-- Commit message style: `feat: add X`, `fix: Y`, `refactor: Z`.
+- **Read the full file before touching anything.**
+- The active company for this project is **Momentum** (persistent company in DB).
+  Workspace: `workspace/momentum/`. Use `uv run dri company list` to get the ID.
+- **LangGraph is NOT used** despite being in the architecture table. `graph.py` is a skeleton.
+  Don't add LangGraph code without user approval.
+- `settings.py` singleton: `from dri.config.settings import settings` or `get_settings()`.
+  Never read env vars directly elsewhere.
+- All async: `async def` everywhere. No sync/async mixing without `asyncio.to_thread()`.
+- Commit style: `feat: X`, `fix: Y`, `refactor: Z`. Separate logical concerns into separate commits.
+- The `docs/` folder is gitignored (personal notes). Do not commit anything there.
+- Workspace files in `shared/_pending_approvals.json` are the approval queue — do not modify manually.
+- `_wip/` folders are auto-deleted by the framework — never rely on their contents persisting.
