@@ -52,6 +52,7 @@ class Spawner:
         bus: CommunicationBus,
         budget_manager: BudgetManager,
         workspace_root: str = "",
+        root_workspace_access: bool = False,
     ) -> None:
         self._session_id = session_id
         self._company_name = company_name
@@ -60,6 +61,8 @@ class Spawner:
         self._bus = bus
         self._budget_manager = budget_manager
         self._workspace_root = workspace_root
+        # When True, all spawned agents get full workspace access (used by task forces).
+        self._root_workspace_access = root_workspace_access
 
     @staticmethod
     def _slug(name: str) -> str:
@@ -71,7 +74,8 @@ class Spawner:
         """Return the workspace permission list for an agent based on its role."""
         if not self._workspace_root:
             return []
-        if role == AgentRole.ROOT:
+        # ROOT role or task-force context: full workspace access
+        if role == AgentRole.ROOT or self._root_workspace_access:
             return [WorkspacePermission(path="", can_read=True, can_write=True, can_delete=True)]
         if role == AgentRole.MANAGER:
             dept = self._slug(title)
@@ -145,6 +149,15 @@ class Spawner:
 
         # ── Allocate budget ───────────────────────────────────
         await self._budget_manager.allocate(config.id, request.budget_tokens)
+
+        # ── Auto-include file tools for all workspace agents ─────
+        # All workspace agents get the full file toolkit automatically.
+        # RBAC (workspace_permissions) enforces what they can actually access.
+        # The parent LLM decides WHAT to do, not whether the tools exist.
+        if self._workspace_root:
+            for _t in ("file_list", "file_read", "file_write", "file_delete"):
+                if _t not in config.allowed_tools:
+                    config.allowed_tools.append(_t)
 
         # ── Build context packet ──────────────────────────────
         config.metadata["parent_id"] = request.parent_id or ""
