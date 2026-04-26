@@ -37,12 +37,27 @@ class ProposeExternalActionTool(BaseTool):
         "properties": {
             "action_type": {
                 "type": "string",
-                "enum": ["email", "linkedin_message", "social_post", "phone_call", "outreach_message", "other"],
-                "description": "Type of external action.",
+                "enum": [
+                    "email",
+                    "linkedin_message",
+                    "social_post",
+                    "phone_call",
+                    "outreach_message",
+                    "bulk_file_delete",
+                    "other",
+                ],
+                "description": (
+                    "Type of action requiring approval. "
+                    "Use 'bulk_file_delete' when `file_delete` is blocked because a directory "
+                    "contains more files than the deletion threshold — list every file path in `content`."
+                ),
             },
             "recipient": {
                 "type": "string",
-                "description": "Who this action targets: name, email address, handle, or description.",
+                "description": (
+                    "Who this action targets: name, email address, handle, or description. "
+                    "Leave empty for bulk_file_delete (not applicable)."
+                ),
             },
             "subject": {
                 "type": "string",
@@ -50,14 +65,17 @@ class ProposeExternalActionTool(BaseTool):
             },
             "content": {
                 "type": "string",
-                "description": "The full text/body of the proposed message or action.",
+                "description": (
+                    "The full text/body of the proposed action. "
+                    "For bulk_file_delete: list every file path that will be deleted, one per line."
+                ),
             },
             "rationale": {
                 "type": "string",
                 "description": "Why this action is proposed and what business outcome it targets.",
             },
         },
-        "required": ["action_type", "recipient", "content", "rationale"],
+        "required": ["action_type", "content", "rationale"],
     }
 
     async def execute(self, raw_input: dict[str, Any]) -> ToolOutput:
@@ -69,6 +87,29 @@ class ProposeExternalActionTool(BaseTool):
             return ToolOutput.fail(
                 "propose_external_action requires a persistent company workspace. "
                 "This tool only works within a `dri company chat` or `dri company task` session."
+            )
+
+        # Validate required fields before writing — empty actions are useless to the founder.
+        action_type = raw_input.get("action_type", "other")
+        is_outreach = action_type not in ("bulk_file_delete", "other")
+        missing: list[str] = []
+        # recipient is required for all real-world outreach, not for internal ops
+        if is_outreach and not raw_input.get("recipient", "").strip():
+            missing.append("recipient (who this targets: name, email address, handle…)")
+        if not raw_input.get("content", "").strip():
+            if action_type == "bulk_file_delete":
+                missing.append("content (list every file path that will be deleted, one per line)")
+            else:
+                missing.append("content (the full body/text of the message or action)")
+        if not raw_input.get("rationale", "").strip():
+            missing.append("rationale (why this action is needed and what outcome it targets)")
+        if missing:
+            return ToolOutput.fail(
+                "Cannot log action — the following required fields are empty:\n"
+                + "\n".join(f"  - {m}" for m in missing)
+                + "\n\nDo NOT call this tool again until you have filled in all fields with "
+                "real, non-placeholder content. If you do not have the information, escalate "
+                "to your manager instead of submitting an incomplete action."
             )
 
         shared_dir = Path(workspace_root) / "shared"

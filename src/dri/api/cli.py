@@ -448,8 +448,12 @@ def approvals_approve(
     company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
     note: str = typer.Option("", "--note", "-n", help="Optional note"),
 ) -> None:
-    """Approve a pending external action (marks it — execution depends on available integrations)."""
+    """Approve a pending action. bulk_file_delete actions are executed immediately on approval."""
     from datetime import datetime, timezone
+    import shutil
+    from pathlib import Path
+
+    approved_action: dict = {}
 
     async def _run() -> bool:
         ws = await _get_workspace(company_id)
@@ -462,6 +466,8 @@ def approvals_approve(
                 a["decided_at"] = datetime.now(timezone.utc).isoformat()
                 a["decision_note"] = note or None
                 _save_pending(ws, actions)
+                approved_action.update(a)
+                approved_action["_ws"] = ws
                 return True
         return False
 
@@ -469,8 +475,47 @@ def approvals_approve(
     if not found:
         console.print(f"[red]Action #{action_id} not found.[/red]")
         raise typer.Exit(1)
+
     console.print(f"[green]Action #{action_id} approved.[/green]")
-    console.print("[dim]Note: actual execution requires a configured integration (email, etc.).[/dim]")
+
+    # Execute bulk_file_delete immediately — parse file paths from content and delete them.
+    if approved_action.get("action_type") == "bulk_file_delete":
+        ws_root = Path(approved_action.get("_ws", ""))
+        content = approved_action.get("content", "")
+        paths_to_delete = [
+            line.strip().lstrip("- ").strip()
+            for line in content.splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        deleted, skipped = [], []
+        for rel in paths_to_delete:
+            if not rel:
+                continue
+            target = (ws_root / rel).resolve()
+            if not str(target).startswith(str(ws_root.resolve())):
+                skipped.append(f"{rel} (path escape blocked)")
+                continue
+            if not target.exists():
+                skipped.append(f"{rel} (not found)")
+                continue
+            try:
+                if target.is_file():
+                    target.unlink()
+                else:
+                    shutil.rmtree(str(target))
+                deleted.append(rel)
+            except Exception as e:
+                skipped.append(f"{rel} (error: {e})")
+        if deleted:
+            console.print(f"[green]Deleted {len(deleted)} path(s):[/green]")
+            for p in deleted:
+                console.print(f"  [dim]- {p}[/dim]")
+        if skipped:
+            console.print(f"[yellow]Skipped {len(skipped)} path(s):[/yellow]")
+            for p in skipped:
+                console.print(f"  [dim]- {p}[/dim]")
+    else:
+        console.print("[dim]Note: actual execution requires a configured integration (email, etc.).[/dim]")
 
 
 @approvals_app.command("reject")
