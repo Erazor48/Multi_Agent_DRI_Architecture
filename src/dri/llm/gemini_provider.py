@@ -110,8 +110,18 @@ class GeminiProvider(BaseLLMProvider):
                             result_data = json.loads(result_content) if isinstance(result_content, str) else result_content
                         except (json.JSONDecodeError, TypeError):
                             result_data = {"result": str(result_content)}
+                        # Gemini FunctionResponse.response must be a dict — wrap lists and primitives
+                        if not isinstance(result_data, dict):
+                            result_data = {"result": result_data}
+                        # Use tool_name if present; fall back to tool_call_id (wire format key)
+                        func_name = (
+                            block.get("tool_name")
+                            or block.get("tool_call_id")
+                            or block.get("tool_use_id")
+                            or "unknown"
+                        )
                         parts.append(types.Part.from_function_response(
-                            name=block.get("tool_use_id", "unknown"),
+                            name=func_name,
                             response=result_data,
                         ))
                 if parts:
