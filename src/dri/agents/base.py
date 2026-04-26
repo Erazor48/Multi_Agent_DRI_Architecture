@@ -225,6 +225,7 @@ class BaseAgent(ABC):
                     {
                         "type": "tool_result",
                         "tool_call_id": r["tool_call_id"],
+                        "tool_name": r.get("tool_name", ""),
                         "content": r["content"],
                     }
                     for r in tool_results
@@ -286,6 +287,7 @@ class BaseAgent(ABC):
 
         return {
             "tool_call_id": tool_call.id,
+            "tool_name": tool_name,   # carried for provider compatibility (e.g. Gemini)
             "content": result_str,
         }
 
@@ -342,15 +344,26 @@ class BaseAgent(ABC):
 
     def _cleanup_wip(self) -> None:
         """
-        Hard guarantee: delete the agent's _wip/ subfolder after every task,
+        Hard guarantee: delete _wip/ subfolder(s) after every task,
         success or failure. This runs in the framework, not in the LLM —
         the LLM cannot forget or skip it.
 
-        Finds the agent's own dept path as the first permission entry
-        that is specific (non-empty, not shared/, has write+delete rights).
+        For normal RBAC agents: only the agent's own dept _wip/ is removed.
+        For full-workspace-access agents (path="" with write+delete): all _wip/
+        subdirectories in the entire workspace are removed. This covers task-force
+        workers that may write to any dept folder.
         """
         if not self._ctx.workspace_root:
             return
+        root = Path(self._ctx.workspace_root)
+        # Full workspace access — clean every _wip/ dir (safe: called after all children finish)
+        for perm in self._ctx.workspace_permissions:
+            if perm.path == "" and perm.can_write and perm.can_delete:
+                for wip_dir in sorted(root.rglob("_wip"), reverse=True):
+                    if wip_dir.is_dir():
+                        shutil.rmtree(str(wip_dir), ignore_errors=True)
+                return
+        # Normal RBAC — clean own department _wip/ only
         own_dept: str | None = None
         for perm in self._ctx.workspace_permissions:
             if perm.path and perm.path != "shared/" and perm.can_write and perm.can_delete:
@@ -358,7 +371,7 @@ class BaseAgent(ABC):
                 break
         if not own_dept:
             return
-        wip_dir = Path(self._ctx.workspace_root) / own_dept.rstrip("/") / "_wip"
+        wip_dir = root / own_dept.rstrip("/") / "_wip"
         if wip_dir.exists() and wip_dir.is_dir():
             shutil.rmtree(str(wip_dir), ignore_errors=True)
 
@@ -383,10 +396,42 @@ class BaseAgent(ABC):
             task_repo = TaskRepository(db)
             await task_repo.fail(task_id, error)
 
-    def _inventory_dept_files(self) -> list[str]:
-        """List deliverable files left on disk in the agent's dept folder (after _wip/ is cleaned)."""
+    def _inventory_shared_files(self) -> list[str]:
+        """List files in shared/ — readable by all agents, used to ground synthesis reports."""
         if not self._ctx.workspace_root:
             return []
+        shared_dir = Path(self._ctx.workspace_root) / "shared"
+        if not shared_dir.exists():
+            return []
+        root = Path(self._ctx.workspace_root)
+        return sorted(
+            str(f.relative_to(root))
+            for f in shared_dir.rglob("*")
+            if f.is_file()
+        )
+
+    def _inventory_dept_files(self) -> list[str]:
+        """
+        List deliverable files on disk in the agent's writable scope (after _wip/ is cleaned).
+
+        Full-workspace-access agents (task force lead, root agents) return every file
+        in the workspace — their synthesis must be grounded in the complete reality.
+        Normal RBAC agents return only their own dept folder.
+        """
+        if not self._ctx.workspace_root:
+            return []
+        root = Path(self._ctx.workspace_root)
+        # Full workspace access — return all files so synthesis cannot cite phantom files
+        for perm in self._ctx.workspace_permissions:
+            if perm.path == "" and perm.can_write and perm.can_delete:
+                if not root.exists():
+                    return []
+                return sorted(
+                    f.relative_to(root).as_posix()
+                    for f in root.rglob("*")
+                    if f.is_file() and "_wip" not in f.parts
+                )
+        # Normal RBAC — own department folder only
         own_dept: str | None = None
         for perm in self._ctx.workspace_permissions:
             if perm.path and perm.path != "shared/" and perm.can_write and perm.can_delete:
@@ -394,12 +439,11 @@ class BaseAgent(ABC):
                 break
         if not own_dept:
             return []
-        dept_dir = Path(self._ctx.workspace_root) / own_dept.rstrip("/")
+        dept_dir = root / own_dept.rstrip("/")
         if not dept_dir.exists():
             return []
-        root = Path(self._ctx.workspace_root)
         return sorted(
-            str(f.relative_to(root))
+            f.relative_to(root).as_posix()
             for f in dept_dir.rglob("*")
             if f.is_file() and "_wip" not in f.parts
         )

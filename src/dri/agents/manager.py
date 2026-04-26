@@ -213,15 +213,31 @@ class ManagerAgent(BaseAgent):
 
     async def _synthesize(self, task: Task, results_text: str, approach: str) -> str:
         """Ask the LLM to synthesize all sub-results into a final report."""
+        # Build the live file inventory grounded in reality.
+        # For full-access agents, dept_files already covers the entire workspace
+        # (including shared/), so we deduplicate before building the prompt block.
+        dept_files = self._inventory_dept_files()
+        shared_files = self._inventory_shared_files()
+        all_files = sorted(set(dept_files + shared_files))
+        file_inventory = ""
+        if all_files:
+            lines = ["**Files confirmed on disk (verified on-disk — not from team reports):**"]
+            for f in all_files:
+                lines.append(f"  - {f}")
+            file_inventory = "\n" + "\n".join(lines) + "\n"
+
         messages = [
             {
                 "role": "user",
                 "content": (
                     f"## Original Objective\n\n{task.description}\n\n"
                     f"## Synthesis Approach\n\n{approach}\n\n"
-                    f"## Team Results\n\n{results_text}\n\n"
+                    f"## Team Results\n\n{results_text}\n"
+                    f"{file_inventory}\n"
                     "Synthesize these results into a single, coherent, complete output. "
                     "Your manager expects a professional, structured report — not a list of summaries.\n\n"
+                    "Only cite files that appear in the confirmed inventory above. "
+                    "Do not reference any file not listed there, even if a team member mentioned it.\n\n"
                     "If any team member was INTERRUPTED: acknowledge it explicitly, state what was "
                     "completed vs incomplete, list any files they left on disk, and recommend a "
                     "concrete next action (retry with narrower scope / reassign remaining work / "
