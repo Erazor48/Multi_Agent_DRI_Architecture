@@ -21,7 +21,11 @@ class WorkerAgent(BaseAgent):
                 "content": (
                     f"## Your Task\n\n{task.description}"
                     + (f"\n\n## Context\n\n{task.context}" if task.context else "")
-                    + "\n\nExecute this task completely. Use your available tools as needed. "
+                    + "\n\nExecute this task completely. Use your available tools as needed.\n\n"
+                    "**Before writing your final report:**\n"
+                    "1. Call `file_list` on your department folder to see what files you actually produced.\n"
+                    "2. Only cite files confirmed to exist on disk.\n"
+                    "3. If a write failed or produced nothing, report that honestly.\n"
                     "Return a clear, structured result that your manager can use directly."
                 ),
             }

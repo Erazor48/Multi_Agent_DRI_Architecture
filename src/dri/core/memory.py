@@ -109,9 +109,14 @@ class ContextPacket:
             "is always better than an invented answer.\n"
             "- **Mark hypotheticals explicitly.** Any example, template, or illustrative content "
             "that is not real data must be labeled `[EXAMPLE — NOT REAL DATA]`.\n"
+            "- **Verify before citing.** Before finalizing your report, call `file_list` on your "
+            "department folder to confirm which files actually exist on disk. "
+            "NEVER mention a file in your report unless you have confirmed it exists. "
+            "A file you intended to write but did not is a failure, not a result.\n"
             "- **Cite every file you produce.** In your report to your manager, list each file "
             "you created or modified with its exact workspace-relative path "
-            "(e.g. `shared/startup_data.csv`, `marketing/report.md`)."
+            "(e.g. `shared/report.md`, `marketing/strategy.md`). "
+            "If you produced nothing, say so explicitly — do not invent deliverables."
         )
 
         lines.append("\n## File Lifecycle Rules\n")
