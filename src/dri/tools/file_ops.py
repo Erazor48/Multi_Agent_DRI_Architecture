@@ -191,18 +191,24 @@ class FileListTool(BaseTool):
 class FileDeleteTool(BaseTool):
     name = "file_delete"
     description = (
-        "Delete a file from the workspace. "
+        "Delete a file or an entire folder (and all its contents) from the workspace. "
+        "Use for single files or for removing obsolete/rogue folders entirely. "
         "Requires explicit delete permission for the path."
     )
     input_schema = {
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "Relative path from workspace root."},
+            "path": {
+                "type": "string",
+                "description": "Relative path from workspace root. Can be a file or a directory.",
+            },
         },
         "required": ["path"],
     }
 
     async def execute(self, raw_input: dict[str, Any]) -> ToolOutput:
+        import shutil
+
         workspace_root: str = raw_input.get("_workspace_root", "")
         permissions: list[dict] = raw_input.get("_permissions", [])
         rel = raw_input.get("path", "")
@@ -215,13 +221,39 @@ class FileDeleteTool(BaseTool):
             return ToolOutput.fail(f"Permission denied: delete on '{rel}'.")
 
         if not path.exists():
-            return ToolOutput.fail(f"File not found: {rel}")
-        if not path.is_file():
-            return ToolOutput.fail(f"Not a file: {rel}")
+            return ToolOutput.fail(f"Not found: {rel}")
 
         try:
-            path.unlink()
-            return ToolOutput.ok({"deleted": rel})
+            if path.is_file():
+                path.unlink()
+                return ToolOutput.ok({"deleted": rel, "type": "file"})
+            elif path.is_dir():
+                # Guard: bulk directory deletes require founder approval above threshold.
+                # This prevents agents from silently wiping large parts of the workspace.
+                _BULK_DELETE_THRESHOLD = 3
+                files_inside = [f for f in path.rglob("*") if f.is_file()]
+                if len(files_inside) > _BULK_DELETE_THRESHOLD:
+                    file_list_preview = "\n".join(
+                        f"  - {f.relative_to(path.parent).as_posix()}"
+                        for f in sorted(files_inside)[:20]
+                    )
+                    suffix = f"\n  ... and {len(files_inside) - 20} more" if len(files_inside) > 20 else ""
+                    return ToolOutput.fail(
+                        f"Bulk delete blocked: '{rel}' contains {len(files_inside)} files — "
+                        f"above the {_BULK_DELETE_THRESHOLD}-file threshold.\n\n"
+                        f"Files that would be deleted:\n{file_list_preview}{suffix}\n\n"
+                        "Founder approval is required before deleting this many files.\n"
+                        "Steps:\n"
+                        "  1. Call `propose_external_action` with action_type='bulk_file_delete'.\n"
+                        "  2. In `content`, list every file path that will be deleted.\n"
+                        "  3. In `rationale`, explain why each file is obsolete.\n"
+                        "  4. Report to your manager that a bulk delete is pending founder approval.\n"
+                        "Do NOT attempt to delete these files one by one to bypass this guard."
+                    )
+                shutil.rmtree(str(path))
+                return ToolOutput.ok({"deleted": rel, "type": "directory", "files_removed": len(files_inside)})
+            else:
+                return ToolOutput.fail(f"Not a file or directory: {rel}")
         except Exception as e:
             return ToolOutput.fail(f"Failed to delete: {e}")
 
