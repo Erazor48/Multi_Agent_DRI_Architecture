@@ -1,4 +1,5 @@
 .env
+.dri_state
 .venv/
 credentials/
 docs/

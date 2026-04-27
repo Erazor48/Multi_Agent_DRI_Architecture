@@ -135,6 +135,30 @@ company_app = typer.Typer(name="company", help="Manage persistent companies.")
 app.add_typer(company_app, name="company")
 
 
+async def _resolve_company(company_id: str) -> "PersistentCompany | None":  # type: ignore[name-defined]
+    """
+    Resolve which company to use, in priority order:
+      1. Explicit --id argument
+      2. Active company from .dri_state
+      3. Most recently created (get_latest fallback)
+    """
+    from dri.config.state import get_active_company_id
+    from dri.storage.database import init_db, get_session
+    from dri.storage.repositories import PersistentCompanyRepository
+
+    await init_db()
+    async with get_session() as db:
+        repo = PersistentCompanyRepository(db)
+        if company_id:
+            return await repo.get(company_id)
+        active_id = get_active_company_id()
+        if active_id:
+            c = await repo.get(active_id)
+            if c is not None:
+                return c
+        return await repo.get_latest()
+
+
 @company_app.command("create")
 def company_create(
     pitch: str = typer.Option("", "--pitch", "-p", help="Company pitch"),
@@ -172,13 +196,18 @@ def company_create(
         title="[bold]Company Created[/bold]",
         border_style="green",
     ))
+    # Automatically set as active company so the user can skip --id immediately
+    from dri.config.state import set_active_company_id
+    set_active_company_id(company.id)
     console.print("\n[dim]Use [bold]dri company chat[/bold] to start working with your CEO.[/dim]")
+    console.print(f"[dim]This company is now your active company. Switch with [bold]dri company use[/bold].[/dim]")
 
 
 @company_app.command("list")
 def company_list() -> None:
-    """List all persistent companies."""
+    """List all persistent companies. The active company is marked with [active]."""
     async def _run() -> None:
+        from dri.config.state import get_active_company_id
         from dri.storage.database import init_db, get_session
         from dri.storage.repositories import PersistentCompanyRepository
         from rich.table import Table
@@ -192,22 +221,75 @@ def company_list() -> None:
             console.print("[dim]No persistent companies found. Use [bold]dri company create[/bold].[/dim]")
             return
 
+        active_id = get_active_company_id()
         table = Table(title="Your Companies", show_lines=True)
+        table.add_column("", width=2)  # active indicator
         table.add_column("ID", style="dim", width=10)
         table.add_column("Name", style="bold")
         table.add_column("Vision")
-        table.add_column("Departments", justify="right")
+        table.add_column("Depts", justify="right")
         table.add_column("Created", style="dim")
 
         for c in companies:
+            is_active = c.id == active_id
+            indicator = "[bold green]*[/bold green]" if is_active else ""
+            name = f"[bold green]{c.name}[/bold green]" if is_active else c.name
             table.add_row(
+                indicator,
                 c.id[:8] + "...",
-                c.name,
-                c.vision[:60] + "..." if len(c.vision) > 60 else c.vision,
+                name,
+                c.vision[:55] + "..." if len(c.vision) > 55 else c.vision,
                 str(len(c.org_structure)),
                 c.created_at.strftime("%Y-%m-%d %H:%M"),
             )
         console.print(table)
+        if active_id:
+            console.print("[dim]* = active company  |  [bold]dri company use <name-or-id>[/bold] to switch[/dim]")
+        else:
+            console.print("[dim]No active company set. Use [bold]dri company use <name-or-id>[/bold].[/dim]")
+
+    asyncio.run(_run())
+
+
+@company_app.command("use")
+def company_use(
+    target: str = typer.Argument("", help="Company name (partial match) or ID prefix. Omit to show current."),
+) -> None:
+    """Set the active company (used by default when --id is not specified)."""
+    async def _run() -> None:
+        from dri.config.state import get_active_company_id, set_active_company_id
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import PersistentCompanyRepository
+
+        await init_db()
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            companies = await repo.list_active()
+
+        if not target.strip():
+            active_id = get_active_company_id()
+            if not active_id:
+                console.print("[dim]No active company. Use [bold]dri company use <name-or-id>[/bold].[/dim]")
+                return
+            match = next((c for c in companies if c.id == active_id), None)
+            if match:
+                console.print(f"Active company: [bold green]{match.name}[/bold green] [dim]({match.id[:8]}...)[/dim]")
+            else:
+                console.print(f"[yellow]Active ID {active_id[:8]}... not found in DB (stale state).[/yellow]")
+            return
+
+        q = target.strip().lower()
+        match = next(
+            (c for c in companies if q in c.id.lower() or q in c.name.lower()),
+            None,
+        )
+        if match is None:
+            console.print(f"[red]No company matching '{target}'. Run [bold]dri company list[/bold] to see options.[/red]")
+            raise typer.Exit(1)
+
+        set_active_company_id(match.id)
+        console.print(f"Active company set to [bold green]{match.name}[/bold green] [dim]({match.id[:8]}...)[/dim]")
+        console.print("[dim]All commands now default to this company.[/dim]")
 
     asyncio.run(_run())
 
@@ -219,17 +301,12 @@ def company_chat(
     """Start an interactive session with your company CEO."""
 
     async def _session() -> None:
-        from dri.storage.database import init_db, get_session
-        from dri.storage.repositories import PersistentCompanyRepository
         from dri.orchestration.company_executor import CompanyExecutor
 
-        await init_db()
-        async with get_session() as db:
-            repo = PersistentCompanyRepository(db)
-            c = await repo.get(company_id) if company_id else await repo.get_latest()
-
+        c = await _resolve_company(company_id)
         if c is None:
             console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
+            console.print("[dim]Or set an active company with [bold]dri company use <name-or-id>[/bold].[/dim]")
             return
 
         cid, cname = c.id, c.name
@@ -279,15 +356,10 @@ def company_task(
 ) -> None:
     """Spawn a team to execute a task for your company."""
     async def _run() -> str:
-        from dri.storage.database import init_db, get_session
-        from dri.storage.repositories import PersistentCompanyRepository
         from dri.orchestration.company_executor import CompanyExecutor
-        await init_db()
-        async with get_session() as db:
-            repo = PersistentCompanyRepository(db)
-            c = await repo.get(company_id) if company_id else await repo.get_latest()
+        c = await _resolve_company(company_id)
         if c is None:
-            raise ValueError("No company found.")
+            raise ValueError("No company found. Use 'dri company create' or 'dri company use'.")
         return await CompanyExecutor.task(c.id, task)
 
     with Progress(SpinnerColumn(), TextColumn("{task.description}"), TimeElapsedColumn(), console=console) as p:
@@ -329,14 +401,8 @@ def _save_pending(workspace_root: str, actions: list[dict]) -> None:
 
 async def _get_workspace(company_id: str) -> str | None:
     import re
-    from dri.storage.database import init_db, get_session
-    from dri.storage.repositories import PersistentCompanyRepository
     from dri.config.settings import get_settings
-
-    await init_db()
-    async with get_session() as db:
-        repo = PersistentCompanyRepository(db)
-        c = await repo.get(company_id) if company_id else await repo.get_latest()
+    c = await _resolve_company(company_id)
     if c is None:
         return None
     slug = re.sub(r"[^a-z0-9]+", "-", c.name.lower()).strip("-")
