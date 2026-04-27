@@ -235,7 +235,10 @@ class CompanyExecutor:
 
             "## Execution rules — mandatory\n"
             "- For tasks requiring real work (research, content, code, analysis, file edits): "
-            "use `spawn_team`. For discussion and questions: respond directly.\n"
+            "call `spawn_team` NOW in this response — do NOT describe launching a team "
+            "without actually calling the tool. 'Je mandate une équipe' without a spawn_team "
+            "call is fabrication and is strictly forbidden.\n"
+            "- For discussion and questions: respond directly without spawn_team.\n"
             "- **After every spawn_team**: use `file_read` on each key deliverable to verify "
             "its content is real and complete — not empty, not placeholder, not fabricated. "
             "A file that exists but contains fake or template data counts as FAILED.\n"
