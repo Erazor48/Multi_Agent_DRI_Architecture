@@ -19,7 +19,12 @@ from rich.rule import Rule
 from rich.text import Text
 
 app = typer.Typer(name="dri", help="DRI Multi-Agent Company System", no_args_is_help=False)
-console = Console()
+# Disable legacy Windows console rendering (uses Win32 API limited to cp1252).
+# Modern Windows 10/11 terminals support ANSI + UTF-8 natively.
+if sys.platform == "win32":
+    import io as _io
+    sys.stdout = _io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+console = Console(highlight=False, legacy_windows=False)
 
 
 def _print_banner() -> None:
@@ -581,7 +586,33 @@ def approvals_approve(
             for p in skipped:
                 console.print(f"  [dim]- {p}[/dim]")
     else:
-        console.print("[dim]Note: actual execution requires a configured integration (email, etc.).[/dim]")
+        # Dispatch to the appropriate connector (email, webhook, etc.)
+        import dri.connectors  # noqa: F401 — trigger registration
+        from dri.connectors.registry import ConnectorRegistry
+
+        action_type = approved_action.get("action_type", "other")
+        connector = ConnectorRegistry.get_for(action_type, approved_action)
+
+        if connector is None:
+            console.print(
+                f"[dim]No connector available for '{action_type}'. "
+                "Action approved and recorded — execute manually.[/dim]"
+            )
+        elif not connector.is_configured:
+            console.print(
+                f"[yellow]Connector found but not configured.[/yellow]\n"
+                f"[dim]{connector.setup_hint}[/dim]"
+            )
+        else:
+            console.print(f"[dim]Executing via {type(connector).__name__}...[/dim]")
+            exec_result = asyncio.run(connector.execute(approved_action))
+            if exec_result.success:
+                console.print(f"[green]✓ Executed: {exec_result.message}[/green]")
+                if exec_result.external_id:
+                    console.print(f"[dim]External ID: {exec_result.external_id}[/dim]")
+            else:
+                console.print(f"[red]✗ Execution failed: {exec_result.message}[/red]")
+                console.print("[dim]Action remains approved — retry manually if needed.[/dim]")
 
 
 @approvals_app.command("reject")

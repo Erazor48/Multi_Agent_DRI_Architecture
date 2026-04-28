@@ -27,8 +27,8 @@ class ProposeExternalActionTool(BaseTool):
     name = "propose_external_action"
     description = (
         "Propose an action that requires real-world interaction "
-        "(sending an email, LinkedIn message, social post, phone call, outreach). "
-        "This logs the action for FOUNDER APPROVAL — it is NOT executed. "
+        "(sending an email, posting to Slack/Discord via webhook, social post, outreach). "
+        "This logs the action for FOUNDER APPROVAL — it is NOT executed immediately. "
         "Use this instead of simulating or fabricating results. "
         "After calling this, stop and report to your manager that the action is pending approval."
     )
@@ -39,6 +39,9 @@ class ProposeExternalActionTool(BaseTool):
                 "type": "string",
                 "enum": [
                     "email",
+                    "sms",
+                    "webhook",
+                    "slack_message",
                     "linkedin_message",
                     "social_post",
                     "phone_call",
@@ -48,8 +51,15 @@ class ProposeExternalActionTool(BaseTool):
                 ],
                 "description": (
                     "Type of action requiring approval. "
-                    "Use 'bulk_file_delete' when `file_delete` is blocked because a directory "
-                    "contains more files than the deletion threshold — list every file path in `content`."
+                    "Use 'email' to send an email (recipient = email address). "
+                    "Use 'sms' to send an SMS (recipient = phone number in +E.164 format). "
+                    "Use 'slack_message' to post to a Slack channel or user "
+                    "(recipient = #channel-name, channel ID like C12345, or user ID like U12345). "
+                    "Use 'webhook' to POST to a Slack/Discord/Make.com/Zapier URL "
+                    "(recipient = the full webhook URL). "
+                    "Use 'social_post' for social media content. "
+                    "Use 'bulk_file_delete' when file_delete is blocked by the bulk guard — "
+                    "list every file path in content."
                 ),
             },
             "recipient": {
@@ -78,6 +88,10 @@ class ProposeExternalActionTool(BaseTool):
         "required": ["action_type", "content", "rationale"],
     }
 
+    _VALID_TYPES = frozenset(
+        {"email", "sms", "webhook", "slack_message", "linkedin_message", "social_post", "phone_call", "outreach_message", "bulk_file_delete", "other"}
+    )
+
     async def execute(self, raw_input: dict[str, Any]) -> ToolOutput:
         workspace_root: str = raw_input.get("_workspace_root", "")
         agent_title: str = raw_input.get("_agent_title", "Unknown Agent")
@@ -91,16 +105,36 @@ class ProposeExternalActionTool(BaseTool):
 
         # Validate required fields before writing — empty actions are useless to the founder.
         action_type = raw_input.get("action_type", "other")
+
+        # Enforce enum — reject any type the LLM invents outside the allowed set.
+        if action_type not in self._VALID_TYPES:
+            valid_list = ", ".join(sorted(self._VALID_TYPES))
+            return ToolOutput.fail(
+                f"Invalid action_type '{action_type}'. "
+                f"You MUST use one of the allowed values: {valid_list}. "
+                "For a LinkedIn post or social media content, use 'social_post'."
+            )
+
         is_outreach = action_type not in ("bulk_file_delete", "other")
         missing: list[str] = []
         # recipient is required for all real-world outreach, not for internal ops
         if is_outreach and not raw_input.get("recipient", "").strip():
             missing.append("recipient (who this targets: name, email address, handle…)")
-        if not raw_input.get("content", "").strip():
+        content_val = raw_input.get("content", "").strip()
+        if not content_val:
             if action_type == "bulk_file_delete":
                 missing.append("content (list every file path that will be deleted, one per line)")
             else:
                 missing.append("content (the full body/text of the message or action)")
+        elif action_type in ("social_post", "email", "linkedin_message", "outreach_message"):
+            # Reject indirect references — the founder must be able to read the exact content
+            # without opening another file. "see file X" is not actionable.
+            lowered = content_val.lower()
+            if any(kw in lowered for kw in ("located at ", "see file", "refer to file", "in the file", "stored at ")):
+                missing.append(
+                    "content must be the FULL TEXT of the message — not a reference to another file. "
+                    "Read the draft file and paste its complete content here."
+                )
         if not raw_input.get("rationale", "").strip():
             missing.append("rationale (why this action is needed and what outcome it targets)")
         if missing:
