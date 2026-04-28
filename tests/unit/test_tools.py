@@ -102,15 +102,15 @@ async def test_path_traversal_blocked(workspace_dir):
 
 @pytest.mark.asyncio
 async def test_web_search_no_api_key(monkeypatch):
-    monkeypatch.setenv("TAVILY_API_KEY", "")
-    monkeypatch.setenv("BRAVE_API_KEY", "")
-    from dri.config.settings import get_settings
-    get_settings.cache_clear()
+    # web_search.py binds `settings` at import time, so we patch the module variable directly.
+    from types import SimpleNamespace
+    monkeypatch.setattr(
+        "dri.tools.web_search.settings",
+        SimpleNamespace(has_web_search=False, tavily_api_key="", brave_api_key=""),
+    )
 
     from dri.tools.base import ToolRegistry
     tool = ToolRegistry.get("web_search")
     result = await tool.execute({"query": "test"})
     assert not result.success
     assert "API key" in result.error
-
-    get_settings.cache_clear()
