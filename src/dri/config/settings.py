@@ -56,6 +56,55 @@ class Settings(BaseSettings):
     tavily_api_key: str = Field("", description="Tavily search API key (optional)")
     brave_api_key: str = Field("", description="Brave search API key (optional)")
 
+    # ── LinkedIn connector ────────────────────────────────────────────────
+    linkedin_access_token: str = Field("", description="LinkedIn OAuth 2.0 access token")
+    linkedin_person_urn: str = Field("", description="LinkedIn person URN (auto-fetched if empty)")
+
+    @property
+    def has_linkedin(self) -> bool:
+        return bool(self.linkedin_access_token)
+
+    # ── SendGrid email connector ──────────────────────────────────────────
+    sendgrid_api_key: str = Field("", description="SendGrid API key (SG....)")
+    sendgrid_from_email: str = Field("", description="Verified sender email for SendGrid")
+    sendgrid_from_name: str = Field("DRI Agent", description="Sender display name for SendGrid")
+
+    @property
+    def has_sendgrid(self) -> bool:
+        return bool(self.sendgrid_api_key and self.sendgrid_from_email)
+
+    # ── Twilio SMS connector ──────────────────────────────────────────────
+    twilio_account_sid: str = Field("", description="Twilio Account SID (AC...)")
+    twilio_auth_token: str = Field("", description="Twilio Auth Token")
+    twilio_from_number: str = Field("", description="Twilio sender phone number (+E.164)")
+
+    @property
+    def has_twilio(self) -> bool:
+        return bool(self.twilio_account_sid and self.twilio_auth_token and self.twilio_from_number)
+
+    # ── Slack Bot Token connector ─────────────────────────────────────────
+    slack_bot_token: str = Field("", description="Slack Bot User OAuth Token (xoxb-...)")
+    slack_default_channel: str = Field("", description="Fallback channel when recipient is empty (e.g. #general)")
+
+    @property
+    def has_slack(self) -> bool:
+        return bool(self.slack_bot_token)
+
+    # ── Email connector (SMTP) ────────────────────────────────────────────
+    smtp_host: str = Field("", description="SMTP server host (e.g. smtp.gmail.com)")
+    smtp_port: int = Field(587, description="SMTP port: 587=STARTTLS (default), 465=SSL, 25=plain")
+    smtp_user: str = Field("", description="SMTP username / sender email")
+    smtp_password: str = Field("", description="SMTP password or app password")
+    smtp_from: str = Field("", description="Sender address override (defaults to smtp_user)")
+
+    @property
+    def has_email(self) -> bool:
+        return bool(self.smtp_host and self.smtp_user and self.smtp_password)
+
+    @property
+    def smtp_from_address(self) -> str:
+        return self.smtp_from or self.smtp_user
+
     # ── Storage ───────────────────────────────────────────────────────────
     database_url: str = Field("sqlite+aiosqlite:///./dri_company.db")
 
