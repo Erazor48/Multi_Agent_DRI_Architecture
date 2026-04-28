@@ -14,7 +14,9 @@ class ConnectorRegistry:
 
     @classmethod
     def register(cls, connector: BaseConnector) -> None:
-        cls._connectors.append(connector)
+        # Skip duplicates — safe to import connectors module multiple times (e.g. in tests).
+        if not any(type(c) is type(connector) for c in cls._connectors):
+            cls._connectors.append(connector)
 
     @classmethod
     def get_for(cls, action_type: str, action: dict) -> BaseConnector | None:

@@ -461,7 +461,7 @@ async def test_propose_slack_message_type(tmp_path):
         "rationale": "Keep the team informed.",
     })
     assert result.success
-    assert result.data["action_id"] == 1
+    assert isinstance(result.data["action_id"], str)  # UUID string
 
 
 @pytest.mark.asyncio
@@ -478,7 +478,7 @@ async def test_propose_sms_type(tmp_path):
         "rationale": "Order confirmation SMS.",
     })
     assert result.success
-    assert result.data["action_id"] == 1
+    assert isinstance(result.data["action_id"], str)  # UUID string
 
 
 @pytest.mark.asyncio

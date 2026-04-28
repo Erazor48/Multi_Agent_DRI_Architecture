@@ -385,7 +385,7 @@ uv run pytest            # run tests
 
 ---
 
-## Current Implementation State (as of 2026-04-27)
+## Current Implementation State (as of 2026-04-28)
 
 ### Completed
 - [x] CLAUDE.md
@@ -404,22 +404,22 @@ uv run pytest            # run tests
 - [x] src/dri/tools/base.py + __init__.py
 - [x] src/dri/tools/web_search.py
 - [x] src/dri/tools/code_exec.py
-- [x] src/dri/tools/file_ops.py — file_read / file_write / file_list / file_delete + RBAC
-- [x] src/dri/tools/external_actions.py — propose_external_action + enum validation + content check
-- [x] src/dri/agents/base.py — _cleanup_wip / _inventory_dept_files / _fail_report enriched
+- [x] src/dri/tools/file_ops.py — file_read / file_write / file_list / file_delete + RBAC. File handle uses context manager. Delete counter is per-agent-per-folder (keyed by `_agent_id`).
+- [x] src/dri/tools/external_actions.py — propose_external_action + enum validation + content check. action_id is now UUID string (no race condition).
+- [x] src/dri/agents/base.py — _cleanup_wip / _inventory_dept_files / _fail_report enriched. Injects `_agent_id` into file tool calls.
 - [x] src/dri/agents/root.py — fixed __import__ → proper top-level imports
-- [x] src/dri/agents/manager.py — AgentStatus imported properly, synthesis handles interruption reports
+- [x] src/dri/agents/manager.py — synthesis uses agentic loop (can read files). _plan_org retries once with stricter prompt if LLM skips tool call.
 - [x] src/dri/agents/worker.py
 - [x] src/dri/orchestration/spawner.py — RBAC permissions, auto-include file tools
 - [x] src/dri/orchestration/executor.py
-- [x] src/dri/orchestration/company_executor.py — persistent company mode + Tool allocation rules
+- [x] src/dri/orchestration/company_executor.py — persistent company mode + Tool allocation rules. CEO loop 20 rounds. Task force lead gets web_search if configured.
 - [x] src/dri/connectors/base.py — BaseConnector ABC + ConnectorResult
-- [x] src/dri/connectors/registry.py — ConnectorRegistry
+- [x] src/dri/connectors/registry.py — ConnectorRegistry (dedup on register)
 - [x] src/dri/connectors/email_smtp.py — SMTP email (Gmail, Outlook, any SMTP)
 - [x] src/dri/connectors/webhook.py — HTTP POST (Slack, Discord, Make.com, Zapier, n8n, custom)
 - [x] src/dri/connectors/__init__.py
-- [x] src/dri/api/cli.py — all commands + connector dispatch on approval + Windows UTF-8 fix
-- [x] tests/unit/ (models, budget, memory, tools, registry) — 43/43 passing
+- [x] src/dri/api/cli.py — all commands + connector dispatch on approval + Windows UTF-8 fix. approvals show/approve/reject use 1-based position index (not stored ID).
+- [x] tests/unit/ (models, budget, memory, tools, registry, connectors) — 77/77 passing
 
 ### Pending — connectors roadmap (validated by founder 2026-04-27, implement in order)
 - [x] **#1 Connector: Slack Bot Token** — `SLACK_BOT_TOKEN` + `SLACK_DEFAULT_CHANNEL`. action_type `slack_message` (new) or `webhook` + channel/user ID. `src/dri/connectors/slack_bot.py`.
@@ -428,6 +428,13 @@ uv run pytest            # run tests
 - [x] **#4 Connector: LinkedIn** — `LINKEDIN_ACCESS_TOKEN + LINKEDIN_PERSON_URN`. `social_post` (feed via UGC Posts API) + `linkedin_message` (clair error: Partner API requis). `src/dri/connectors/linkedin.py`. Pas de dep supplémentaire (httpx).
 - [ ] tests/integration/ — full end-to-end pitch test (requires API key)
 - [ ] Next.js frontend (optional, post-MVP)
+
+### Known remaining improvements (future sessions)
+- **Context pruning** — the agentic loop accumulates all tool results in history. For tasks with 15+ tool calls, the context grows large. Implement a rolling window that keeps system prompt + last N turns.
+- **Budget borrowing** — when a child finishes early, unused tokens are lost. Implement a pool where sibling agents can borrow from completed siblings.
+- **Progress streaming** — long CEO loops block the CLI with no feedback beyond the spinner. Add per-tool-call callbacks so the UI shows live tool names as they execute.
+- **Workspace audit log** — `shared/_audit.log` tracking who wrote/deleted what and when. Useful for debugging and for the CEO to understand workspace history.
+- **Integration tests** — `tests/integration/test_company_workflow.py` covering create→chat→task→approve end-to-end (requires API key, mark with `@pytest.mark.integration`).
 
 ---
 

@@ -453,10 +453,10 @@ def approvals_list(
 
     status_colors = {"pending": "yellow", "approved": "green", "rejected": "red"}
 
-    for a in visible:
+    for pos, a in enumerate(visible, start=1):
         color = status_colors.get(a["status"], "white")
         table.add_row(
-            str(a["id"]),
+            str(pos),
             f"[{color}]{a['status']}[/{color}]",
             a.get("action_type", ""),
             a.get("proposed_by", ""),
@@ -471,7 +471,7 @@ def approvals_list(
 
 @approvals_app.command("show")
 def approvals_show(
-    action_id: int = typer.Argument(..., help="Action ID to inspect"),
+    action_id: int = typer.Argument(..., help="Action number as shown in 'approvals list'"),
     company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
 ) -> None:
     """Show the full content of a pending action."""
@@ -487,10 +487,11 @@ def approvals_show(
         console.print("[red]No pending approvals found.[/red]")
         raise typer.Exit(1)
 
-    match = next((a for a in actions if a["id"] == action_id), None)
-    if match is None:
-        console.print(f"[red]Action #{action_id} not found.[/red]")
+    # Lookup by 1-based position in the full list (matches what 'list' displays)
+    if action_id < 1 or action_id > len(actions):
+        console.print(f"[red]Action #{action_id} not found. Valid range: 1–{len(actions)}.[/red]")
         raise typer.Exit(1)
+    match = actions[action_id - 1]
 
     status_colors = {"pending": "yellow", "approved": "green", "rejected": "red"}
     color = status_colors.get(match["status"], "white")
@@ -515,7 +516,7 @@ def approvals_show(
 
 @approvals_app.command("approve")
 def approvals_approve(
-    action_id: int = typer.Argument(..., help="Action ID to approve"),
+    action_id: int = typer.Argument(..., help="Action number as shown in 'approvals list'"),
     company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
     note: str = typer.Option("", "--note", "-n", help="Optional note"),
 ) -> None:
@@ -531,16 +532,16 @@ def approvals_approve(
         if ws is None:
             return False
         actions, _ = _load_pending(ws)
-        for a in actions:
-            if a["id"] == action_id:
-                a["status"] = "approved"
-                a["decided_at"] = datetime.now(timezone.utc).isoformat()
-                a["decision_note"] = note or None
-                _save_pending(ws, actions)
-                approved_action.update(a)
-                approved_action["_ws"] = ws
-                return True
-        return False
+        if action_id < 1 or action_id > len(actions):
+            return False
+        a = actions[action_id - 1]
+        a["status"] = "approved"
+        a["decided_at"] = datetime.now(timezone.utc).isoformat()
+        a["decision_note"] = note or None
+        _save_pending(ws, actions)
+        approved_action.update(a)
+        approved_action["_ws"] = ws
+        return True
 
     found = asyncio.run(_run())
     if not found:
@@ -617,7 +618,7 @@ def approvals_approve(
 
 @approvals_app.command("reject")
 def approvals_reject(
-    action_id: int = typer.Argument(..., help="Action ID to reject"),
+    action_id: int = typer.Argument(..., help="Action number as shown in 'approvals list'"),
     company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
     note: str = typer.Option("", "--note", "-n", help="Reason for rejection"),
 ) -> None:
@@ -629,14 +630,14 @@ def approvals_reject(
         if ws is None:
             return False
         actions, _ = _load_pending(ws)
-        for a in actions:
-            if a["id"] == action_id:
-                a["status"] = "rejected"
-                a["decided_at"] = datetime.now(timezone.utc).isoformat()
-                a["decision_note"] = note or None
-                _save_pending(ws, actions)
-                return True
-        return False
+        if action_id < 1 or action_id > len(actions):
+            return False
+        a = actions[action_id - 1]
+        a["status"] = "rejected"
+        a["decided_at"] = datetime.now(timezone.utc).isoformat()
+        a["decision_note"] = note or None
+        _save_pending(ws, actions)
+        return True
 
     found = asyncio.run(_run())
     if not found:

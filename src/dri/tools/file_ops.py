@@ -61,6 +61,22 @@ def _get_rel_path(target: Path, workspace_root: str) -> str:
         return str(target)
 
 
+def _audit(workspace_root: str, agent_id: str, operation: str, path: str) -> None:
+    """Append one line to shared/_audit.log. Best-effort — never raises."""
+    if not workspace_root:
+        return
+    from datetime import datetime, timezone
+    try:
+        audit_file = Path(workspace_root) / "shared" / "_audit.log"
+        audit_file.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        normalized = path.replace("\\", "/")  # consistent across OS
+        with audit_file.open("a", encoding="utf-8") as fh:
+            fh.write(f"{ts} | {agent_id} | {operation} | {normalized}\n")
+    except Exception:
+        pass
+
+
 class FileReadTool(BaseTool):
     name = "file_read"
     description = (
@@ -138,11 +154,13 @@ class FileWriteTool(BaseTool):
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             mode = "a" if append else "w"
-            path.open(mode, encoding="utf-8").write(content)
-            return ToolOutput.ok({
-                "path": _get_rel_path(path, workspace_root),
-                "bytes": len(content.encode()),
-            })
+            with path.open(mode, encoding="utf-8") as fh:
+                fh.write(content)
+            rel = _get_rel_path(path, workspace_root)
+            agent_id = raw_input.get("_agent_id", "unknown")
+            op = "APPEND" if append else "WRITE"
+            _audit(workspace_root, agent_id, op, rel)
+            return ToolOutput.ok({"path": rel, "bytes": len(content.encode())})
         except Exception as e:
             return ToolOutput.fail(f"Failed to write: {e}")
 
@@ -208,8 +226,8 @@ class FileDeleteTool(BaseTool):
         "required": ["path"],
     }
 
-    # Per-workspace-root deletion counter: tracks files deleted per parent folder
-    # across calls within the same agent execution to catch one-by-one bypass.
+    # Per-agent-per-folder deletion counter. Key = "{agent_id}::{workspace}::{folder}".
+    # Class-level dict is intentional — it's the registry. Each key is unique per agent.
     _delete_counts: dict[str, int] = {}
     _BULK_DELETE_THRESHOLD = 3
 
@@ -249,6 +267,7 @@ class FileDeleteTool(BaseTool):
                 )
             try:
                 shutil.rmtree(str(path))
+                _audit(workspace_root, raw_input.get("_agent_id", "unknown"), "DELETE_DIR", rel)
                 return ToolOutput.ok({"deleted": rel, "type": "directory", "files_removed": len(files_inside)})
             except Exception as e:
                 return ToolOutput.fail(f"Failed to delete directory: {e}")
@@ -256,8 +275,10 @@ class FileDeleteTool(BaseTool):
         if not path.is_file():
             return ToolOutput.fail(f"Not a file or directory: {rel}")
 
-        # Single file delete — track per parent folder to detect looped bypass.
-        parent_key = f"{workspace_root}::{path.parent.as_posix()}"
+        # Single file delete — track per agent per folder to detect looped bypass.
+        # Keyed by agent ID so concurrent agents don't pollute each other's counters.
+        agent_id = raw_input.get("_agent_id", "unknown")
+        parent_key = f"{agent_id}::{workspace_root}::{path.parent.as_posix()}"
         self._delete_counts[parent_key] = self._delete_counts.get(parent_key, 0) + 1
         count = self._delete_counts[parent_key]
 
@@ -272,6 +293,7 @@ class FileDeleteTool(BaseTool):
 
         try:
             path.unlink()
+            _audit(workspace_root, agent_id, "DELETE", rel)
             return ToolOutput.ok({"deleted": rel, "type": "file"})
         except Exception as e:
             return ToolOutput.fail(f"Failed to delete: {e}")

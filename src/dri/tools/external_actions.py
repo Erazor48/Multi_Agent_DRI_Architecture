@@ -16,6 +16,7 @@ Workflow:
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -157,7 +158,7 @@ class ProposeExternalActionTool(BaseTool):
             except Exception:
                 existing = []
 
-        action_id = len(existing) + 1
+        action_id = str(uuid.uuid4())
         entry = {
             "id": action_id,
             "status": "pending",
