@@ -16,6 +16,8 @@ from typing import Any
 from dri.agents.base import BaseAgent
 from dri.core.models import AgentRole, SpawnRequest, Task
 from dri.skills.catalog import SkillCatalog
+from dri.storage.database import get_session
+from dri.storage.repositories import SessionRepository
 
 
 _COMPANY_DESIGN_TOOL = {
@@ -83,8 +85,7 @@ class RootAgent(BaseAgent):
 
         # Update session with company name
         company_name = design.get("company_name", "Company")
-        async with __import__("dri.storage.database", fromlist=["get_session"]).get_session() as db:
-            from dri.storage.repositories import SessionRepository
+        async with get_session() as db:
             session_repo = SessionRepository(db)
             await session_repo.update_root_agent(
                 self._session_id, self.agent_id, company_name

@@ -18,7 +18,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from dri.agents.base import BaseAgent
-from dri.core.models import AgentRole, SpawnRequest, Task
+from dri.core.models import AgentRole, AgentStatus, SpawnRequest, Task
 from dri.skills.catalog import SkillCatalog
 
 if TYPE_CHECKING:
@@ -132,9 +132,7 @@ class ManagerAgent(BaseAgent):
             spawn_requests.append((req, member["task"]))
 
         # Step 3: Spawn agents and run them in parallel
-        await self._registry.update_status(
-            self.agent_id, __import__("dri.core.models", fromlist=["AgentStatus"]).AgentStatus.WAITING
-        )
+        await self._registry.update_status(self.agent_id, AgentStatus.WAITING)
 
         async def _spawn_and_run(req: SpawnRequest, task_description: str) -> str:
             child_task = Task(

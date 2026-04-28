@@ -515,7 +515,7 @@ async def _run_task_force(
     config = AgentConfig(
         role=AgentRole.MANAGER,
         title="Task Force Lead",
-        allowed_tools=["file_list", "file_read", "file_write", "file_delete"],
+        allowed_tools=["file_list", "file_read", "file_write", "file_delete", "propose_external_action"],
         mission=(
             f"You are a task force lead for **{company.name}**.\n"
             f"Company vision: {company.vision}\n\n"
@@ -523,7 +523,27 @@ async def _run_task_force(
             "Any folder NOT in this list is a rogue artifact and must be deleted during cleanup.\n\n"
             f"Your task: {task_description}\n\n"
             "Before designing your team, use `file_list` on the workspace root to check "
-            "what exists — identify rogue folders and build on existing work, do not redo it."
+            "what exists — identify rogue folders and build on existing work, do not redo it.\n\n"
+            "## Tool allocation rules for your team\n"
+            "- Assign `propose_external_action` to any worker that needs to propose a real-world "
+            "action (email, LinkedIn post, social media, outreach). That tool logs the action for "
+            "founder approval — it does NOT execute it immediately.\n"
+            "- Assign `web_search` to workers that need external research.\n"
+            "- File tools (file_list, file_read, file_write, file_delete) are added automatically.\n\n"
+            "## Rules for propose_external_action\n"
+            "- action_type MUST be one of: email, sms, webhook, slack_message, linkedin_message, "
+            "social_post, phone_call, outreach_message, bulk_file_delete, other. Never invent a new type.\n"
+            "- Use 'email' when recipient is an email address.\n"
+            "- Use 'slack_message' when posting to a Slack channel or user "
+            "(recipient = #channel-name, channel ID like C12345, or user ID like U12345). "
+            "This is the preferred type for Slack — do NOT use 'webhook' for Slack channels.\n"
+            "- Use 'sms' when recipient is a phone number in E.164 format (+33XXXXXXXXX).\n"
+            "- Use 'webhook' when recipient is an HTTP/HTTPS URL (Make.com/Zapier/Discord/custom). "
+            "The system will POST the content immediately on approval.\n"
+            "- content MUST be the FULL TEXT of the message — not a reference to a file. "
+            "If you saved a draft to a file, read it back with file_read and paste the entire text "
+            "into content before calling propose_external_action.\n"
+            "- recipient MUST be specific: an email address, a webhook URL, or a platform handle."
         ),
         parent_id=None,
         depth=0,
