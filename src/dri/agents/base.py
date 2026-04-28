@@ -190,6 +190,10 @@ class BaseAgent(ABC):
 
         return response
 
+    # Keep at most this many tool-call rounds in the active history.
+    # Older rounds are pruned to prevent unbounded context growth on long tasks.
+    _MAX_HISTORY_ROUNDS = 8
+
     async def _agentic_loop(
         self,
         initial_messages: list[dict[str, Any]],
@@ -198,8 +202,13 @@ class BaseAgent(ABC):
         """
         Run the full tool-use agentic loop until the model produces a final text response.
         Returns the final text content.
+
+        Context management: the initial task messages are always kept. Tool-call
+        rounds beyond _MAX_HISTORY_ROUNDS are pruned from the tail to prevent
+        the context from growing unboundedly on long tasks.
         """
         tool_specs = ToolRegistry.to_claude_specs(self._ctx.allowed_tools)
+        initial_len = len(initial_messages)
         messages = list(initial_messages)
         final_text = ""
 
@@ -207,18 +216,16 @@ class BaseAgent(ABC):
             response = await self._call_llm(messages, tools=tool_specs or None)
             final_text = response.text
 
-            # Add assistant turn to history
             messages.append(response.to_assistant_message())
 
             if not response.has_tool_calls:
                 return final_text
 
-            # Execute all tool calls in parallel and collect results
+            # Execute all tool calls in parallel
             tool_results = await asyncio.gather(
                 *[self._execute_tool(tc, task_id) for tc in response.tool_calls]
             )
 
-            # Add tool results as next user turn
             messages.append({
                 "role": "user",
                 "content": [
@@ -231,6 +238,13 @@ class BaseAgent(ABC):
                     for r in tool_results
                 ],
             })
+
+            # Prune old rounds: keep initial messages + last _MAX_HISTORY_ROUNDS rounds.
+            # Each round = 2 messages (assistant turn + tool_results user turn).
+            tail = messages[initial_len:]
+            max_tail = self._MAX_HISTORY_ROUNDS * 2
+            if len(tail) > max_tail:
+                messages = list(initial_messages) + tail[-max_tail:]
 
         return final_text or "Maximum tool call rounds reached."
 
@@ -247,6 +261,7 @@ class BaseAgent(ABC):
         # Inject workspace context into file tools
         if tool_name in self._FILE_TOOLS and self._ctx.workspace_root:
             tool_input["_workspace_root"] = self._ctx.workspace_root
+            tool_input["_agent_id"] = self.agent_id
             tool_input["_permissions"] = [
                 p.model_dump() for p in self._ctx.workspace_permissions
             ]
@@ -256,6 +271,15 @@ class BaseAgent(ABC):
             tool_input["_workspace_root"] = self._ctx.workspace_root
             tool_input["_agent_title"] = self._ctx.title
             tool_input["_company_name"] = self._ctx.company_name
+
+        # Surface tool activity to the outer observer (CLI spinner / status line).
+        spawner_ref = getattr(self, "_spawner_ref", None)
+        if spawner_ref is not None:
+            preview = tool_input.get("path") or tool_input.get("query", "")[:40] or ""
+            label = f"{preview}" if preview else ""
+            spawner_ref.report_progress(
+                f"[{self._ctx.title}] {tool_name}" + (f": {label}" if label else "")
+            )
 
         try:
             tool = ToolRegistry.get(tool_name)
@@ -422,6 +446,7 @@ class BaseAgent(ABC):
             return []
         root = Path(self._ctx.workspace_root)
         # Full workspace access — return all files so synthesis cannot cite phantom files
+        _INFRA_FILES = {"_audit.log", "_pending_approvals.json"}
         for perm in self._ctx.workspace_permissions:
             if perm.path == "" and perm.can_write and perm.can_delete:
                 if not root.exists():
@@ -429,7 +454,7 @@ class BaseAgent(ABC):
                 return sorted(
                     f.relative_to(root).as_posix()
                     for f in root.rglob("*")
-                    if f.is_file() and "_wip" not in f.parts
+                    if f.is_file() and "_wip" not in f.parts and f.name not in _INFRA_FILES
                 )
         # Normal RBAC — own department folder only
         own_dept: str | None = None
@@ -442,10 +467,11 @@ class BaseAgent(ABC):
         dept_dir = root / own_dept.rstrip("/")
         if not dept_dir.exists():
             return []
+        _INFRA_FILES = {"_audit.log", "_pending_approvals.json"}
         return sorted(
             f.relative_to(root).as_posix()
             for f in dept_dir.rglob("*")
-            if f.is_file() and "_wip" not in f.parts
+            if f.is_file() and "_wip" not in f.parts and f.name not in _INFRA_FILES
         )
 
     def _fail_report(self, task: Task, error: str) -> ReportMessage:

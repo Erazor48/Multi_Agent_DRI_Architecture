@@ -99,6 +99,7 @@ class Executor:
             bus=bus,
             budget_manager=budget_manager,
             workspace_root=workspace_root,
+            on_progress=on_status,
         )
 
         # ── Build root context packet ─────────────────────────
@@ -120,6 +121,7 @@ class Executor:
             budget_manager=budget_manager,
         )
         root_agent._spawner = spawner  # type: ignore[attr-defined]
+        root_agent._spawner_ref = spawner  # type: ignore[attr-defined]
 
         _notify("CEO agent initialized. Designing company structure...")
 

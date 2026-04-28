@@ -173,25 +173,32 @@ class ManagerAgent(BaseAgent):
         return await self._synthesize(task, results_text, synthesis_approach)
 
     async def _plan_org(self, task: Task) -> dict | None:
-        """Ask the LLM to produce an org plan via tool call."""
-        messages = [
-            {
-                "role": "user",
-                "content": (
-                    f"## Your Objective\n\n{task.description}"
-                    + (f"\n\n## Context\n\n{task.context}" if task.context else "")
-                    + "\n\nAnalyze this objective. Design your team by calling `create_org_plan`. "
-                    "Assign clear, non-overlapping missions. Choose worker for atomic tasks, "
-                    "manager for complex subtasks that need their own team."
-                ),
-            }
+        """
+        Ask the LLM to produce an org plan via tool call.
+        Retries once with a stricter prompt if the LLM responds with text instead of a tool call.
+        """
+        base_content = (
+            f"## Your Objective\n\n{task.description}"
+            + (f"\n\n## Context\n\n{task.context}" if task.context else "")
+        )
+        prompts = [
+            base_content + (
+                "\n\nAnalyze this objective. Design your team by calling `create_org_plan`. "
+                "Assign clear, non-overlapping missions. Choose worker for atomic tasks, "
+                "manager for complex subtasks that need their own team."
+            ),
+            base_content + (
+                "\n\n**You MUST call `create_org_plan` now.** Do not write a plan in text — "
+                "use the tool. This is mandatory. Break the objective into team members, "
+                "assign each a clear mission and task, then call the tool."
+            ),
         ]
 
-        response = await self._call_llm(messages, tools=[_ORG_PLAN_TOOL])
-
-        for tc in response.tool_calls:
-            if tc.name == "create_org_plan":
-                return tc.input
+        for prompt in prompts:
+            response = await self._call_llm([{"role": "user", "content": prompt}], tools=[_ORG_PLAN_TOOL])
+            for tc in response.tool_calls:
+                if tc.name == "create_org_plan":
+                    return tc.input
 
         return None
 
@@ -210,16 +217,19 @@ class ManagerAgent(BaseAgent):
         return await self._agentic_loop(messages, task.id)
 
     async def _synthesize(self, task: Task, results_text: str, approach: str) -> str:
-        """Ask the LLM to synthesize all sub-results into a final report."""
-        # Build the live file inventory grounded in reality.
-        # For full-access agents, dept_files already covers the entire workspace
-        # (including shared/), so we deduplicate before building the prompt block.
+        """
+        Synthesize all sub-results into a final report.
+
+        Uses an agentic loop so the manager can call file_read on key deliverables
+        before writing the synthesis — the result is grounded in actual file content,
+        not just file names reported by workers.
+        """
         dept_files = self._inventory_dept_files()
         shared_files = self._inventory_shared_files()
         all_files = sorted(set(dept_files + shared_files))
         file_inventory = ""
         if all_files:
-            lines = ["**Files confirmed on disk (verified on-disk — not from team reports):**"]
+            lines = ["**Files confirmed on disk (use file_read to read any of these):**"]
             for f in all_files:
                 lines.append(f"  - {f}")
             file_inventory = "\n" + "\n".join(lines) + "\n"
@@ -230,18 +240,21 @@ class ManagerAgent(BaseAgent):
                 "content": (
                     f"## Original Objective\n\n{task.description}\n\n"
                     f"## Synthesis Approach\n\n{approach}\n\n"
-                    f"## Team Results\n\n{results_text}\n"
+                    f"## Team Results (summaries from workers)\n\n{results_text}\n"
                     f"{file_inventory}\n"
-                    "Synthesize these results into a single, coherent, complete output. "
-                    "Your manager expects a professional, structured report — not a list of summaries.\n\n"
+                    "Before writing the synthesis:\n"
+                    "1. Use `file_read` to read the content of key deliverable files listed above "
+                    "— do NOT rely only on the team summaries. Verify the actual content.\n"
+                    "2. Then write a single, coherent, complete synthesis grounded in the real files.\n\n"
                     "Only cite files that appear in the confirmed inventory above. "
                     "Do not reference any file not listed there, even if a team member mentioned it.\n\n"
                     "If any team member was INTERRUPTED: acknowledge it explicitly, state what was "
                     "completed vs incomplete, list any files they left on disk, and recommend a "
                     "concrete next action (retry with narrower scope / reassign remaining work / "
-                    "escalate). Do not silently skip failed subtasks."
+                    "escalate). Do not silently skip failed subtasks.\n\n"
+                    "Your manager expects a professional, structured report — not a list of summaries."
                 ),
             }
         ]
-        response = await self._call_llm(messages)
-        return response.text or results_text
+        result = await self._agentic_loop(messages, task.id)
+        return result or results_text

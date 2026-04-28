@@ -13,12 +13,13 @@ Flow:
 """
 from __future__ import annotations
 
+import re
+from typing import Callable
+
 from dri.config.settings import settings
 from dri.core.budget import BudgetManager
 from dri.core.communication import CommunicationBus
 from dri.core.memory import ContextBuilder, ContextPacket
-import re
-
 from dri.core.models import (
     AgentConfig,
     AgentRole,
@@ -53,6 +54,7 @@ class Spawner:
         budget_manager: BudgetManager,
         workspace_root: str = "",
         root_workspace_access: bool = False,
+        on_progress: Callable[[str], None] | None = None,
     ) -> None:
         self._session_id = session_id
         self._company_name = company_name
@@ -63,6 +65,12 @@ class Spawner:
         self._workspace_root = workspace_root
         # When True, all spawned agents get full workspace access (used by task forces).
         self._root_workspace_access = root_workspace_access
+        # Progress callback: called by any agent in the tree on each tool execution.
+        self._on_progress: Callable[[str], None] = on_progress or (lambda _: None)
+
+    def report_progress(self, message: str) -> None:
+        """Called by agents to surface tool-call activity to the outer status observer."""
+        self._on_progress(message)
 
     @staticmethod
     def _slug(name: str) -> str:
@@ -191,5 +199,8 @@ class Spawner:
         # Attach spawner reference so managers can spawn their own children
         if isinstance(agent, ManagerAgent):
             agent._spawner = self  # type: ignore[attr-defined]
+
+        # Propagate progress callback to every agent (workers + managers)
+        agent._spawner_ref = self  # type: ignore[attr-defined]
 
         return agent

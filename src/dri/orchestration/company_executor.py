@@ -373,7 +373,7 @@ async def _ceo_loop(
             "content": f"**Current workspace (verified on disk):**\n{snapshot}\n\n---\n\n{original}",
         }
 
-    for _ in range(10):  # allow file inspection rounds before and between spawns
+    for _ in range(20):  # allow file inspection rounds before and between spawns
         response = await provider.call(
             system=system,
             messages=msgs,
@@ -447,10 +447,11 @@ def _workspace_snapshot(workspace_root: str) -> str:
     ws = _Path(workspace_root)
     if not ws.exists():
         return "**Workspace snapshot:** (workspace not found)"
+    _INFRA = {"_audit.log", "_pending_approvals.json"}
     files = sorted(
         f.relative_to(ws).as_posix()
         for f in ws.rglob("*")
-        if f.is_file() and "_wip" not in f.parts
+        if f.is_file() and "_wip" not in f.parts and f.name not in _INFRA
     )
     if not files:
         return "**Workspace snapshot (verified on disk):** no files yet."
@@ -512,10 +513,14 @@ async def _run_task_force(
     ]
     official_folders_str = "\n".join(f"  - {f}" for f in official_folders)
 
+    base_tools = ["file_list", "file_read", "file_write", "file_delete", "propose_external_action"]
+    if settings.has_web_search:
+        base_tools.insert(0, "web_search")
+
     config = AgentConfig(
         role=AgentRole.MANAGER,
         title="Task Force Lead",
-        allowed_tools=["file_list", "file_read", "file_write", "file_delete", "propose_external_action"],
+        allowed_tools=base_tools,
         mission=(
             f"You are a task force lead for **{company.name}**.\n"
             f"Company vision: {company.vision}\n\n"
@@ -525,10 +530,16 @@ async def _run_task_force(
             "Before designing your team, use `file_list` on the workspace root to check "
             "what exists — identify rogue folders and build on existing work, do not redo it.\n\n"
             "## Tool allocation rules for your team\n"
-            "- Assign `propose_external_action` to any worker that needs to propose a real-world "
+            + (
+                "- You have `web_search` — use it before making any factual claims about the market, "
+                "competitors, or external data. Assign it to workers that need external research.\n"
+                if settings.has_web_search else
+                "- web_search is not configured. Workers cannot search the web — base decisions on "
+                "provided context and general knowledge; flag gaps clearly.\n"
+            )
+            + "- Assign `propose_external_action` to any worker that needs to propose a real-world "
             "action (email, LinkedIn post, social media, outreach). That tool logs the action for "
             "founder approval — it does NOT execute it immediately.\n"
-            "- Assign `web_search` to workers that need external research.\n"
             "- File tools (file_list, file_read, file_write, file_delete) are added automatically.\n\n"
             "## Rules for propose_external_action\n"
             "- action_type MUST be one of: email, sms, webhook, slack_message, linkedin_message, "
@@ -572,6 +583,7 @@ async def _run_task_force(
         budget_manager=budget_manager,
         workspace_root=workspace_root,
         root_workspace_access=True,  # task force workers act on CEO authority
+        on_progress=on_status,
     )
 
     context = ContextBuilder.build(
