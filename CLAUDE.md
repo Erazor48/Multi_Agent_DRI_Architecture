@@ -2,7 +2,7 @@
 
 > **For any new agent taking over this project:** This file is your single source of truth.
 > Read it **entirely** before touching any code. It reflects the exact state of the codebase
-> as of 2026-04-26. Never start from zero — everything is here.
+> as of 2026-04-27. Never start from zero — everything is here.
 
 ---
 
@@ -99,6 +99,12 @@ Multi_Agent_DRI_Architecture/
 │       │   ├── spawner.py                ← Agent spawn + RBAC permission assignment
 │       │   ├── executor.py               ← One-shot session bootstrap
 │       │   └── company_executor.py       ← Persistent company: create / chat / task
+│       ├── connectors/
+│       │   ├── __init__.py               ← imports all connectors (self-registration)
+│       │   ├── base.py                   ← BaseConnector ABC + ConnectorResult dataclass
+│       │   ├── registry.py               ← ConnectorRegistry.get_for(action_type, action)
+│       │   ├── email_smtp.py             ← SMTP email connector (stdlib only)
+│       │   └── webhook.py                ← HTTP POST (Slack/Discord/Make.com/Zapier/n8n)
 │       └── api/
 │           ├── __init__.py
 │           └── cli.py                    ← Rich CLI — all user-facing commands
@@ -379,13 +385,13 @@ uv run pytest            # run tests
 
 ---
 
-## Current Implementation State (as of 2026-04-26)
+## Current Implementation State (as of 2026-04-27)
 
 ### Completed
 - [x] CLAUDE.md
 - [x] pyproject.toml
-- [x] .env.example
-- [x] src/dri/config/settings.py
+- [x] .env.example — includes connector settings (SMTP, webhook docs)
+- [x] src/dri/config/settings.py — SMTP settings added (smtp_host/port/user/password/from)
 - [x] src/dri/core/models.py
 - [x] src/dri/core/registry.py
 - [x] src/dri/core/memory.py — ContextPacket + system prompt with integrity + file lifecycle rules
@@ -399,20 +405,28 @@ uv run pytest            # run tests
 - [x] src/dri/tools/web_search.py
 - [x] src/dri/tools/code_exec.py
 - [x] src/dri/tools/file_ops.py — file_read / file_write / file_list / file_delete + RBAC
-- [x] src/dri/tools/external_actions.py — propose_external_action
+- [x] src/dri/tools/external_actions.py — propose_external_action + enum validation + content check
 - [x] src/dri/agents/base.py — _cleanup_wip / _inventory_dept_files / _fail_report enriched
-- [x] src/dri/agents/root.py
-- [x] src/dri/agents/manager.py — synthesis handles interruption reports
+- [x] src/dri/agents/root.py — fixed __import__ → proper top-level imports
+- [x] src/dri/agents/manager.py — AgentStatus imported properly, synthesis handles interruption reports
 - [x] src/dri/agents/worker.py
-- [x] src/dri/orchestration/spawner.py — RBAC permissions
+- [x] src/dri/orchestration/spawner.py — RBAC permissions, auto-include file tools
 - [x] src/dri/orchestration/executor.py
-- [x] src/dri/orchestration/company_executor.py — persistent company mode
-- [x] src/dri/api/cli.py — all commands including approvals + decommission
-- [x] tests/unit/ (models, budget, memory, tools, registry)
+- [x] src/dri/orchestration/company_executor.py — persistent company mode + Tool allocation rules
+- [x] src/dri/connectors/base.py — BaseConnector ABC + ConnectorResult
+- [x] src/dri/connectors/registry.py — ConnectorRegistry
+- [x] src/dri/connectors/email_smtp.py — SMTP email (Gmail, Outlook, any SMTP)
+- [x] src/dri/connectors/webhook.py — HTTP POST (Slack, Discord, Make.com, Zapier, n8n, custom)
+- [x] src/dri/connectors/__init__.py
+- [x] src/dri/api/cli.py — all commands + connector dispatch on approval + Windows UTF-8 fix
+- [x] tests/unit/ (models, budget, memory, tools, registry) — 43/43 passing
 
-### Pending
-- [ ] tests/integration/ — full end-to-end pitch test (requires ANTHROPIC_API_KEY)
-- [ ] Real execution of approved external actions (email/LinkedIn integrations)
+### Pending — connectors roadmap (validated by founder 2026-04-27, implement in order)
+- [x] **#1 Connector: Slack Bot Token** — `SLACK_BOT_TOKEN` + `SLACK_DEFAULT_CHANNEL`. action_type `slack_message` (new) or `webhook` + channel/user ID. `src/dri/connectors/slack_bot.py`.
+- [x] **#2 Connector: Twilio SMS** — `TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_FROM_NUMBER`. action_type `sms` (new). `src/dri/connectors/twilio_sms.py`. `twilio>=8.0.0` added to pyproject.toml.
+- [x] **#3 Connector: SendGrid** — `SENDGRID_API_KEY + SENDGRID_FROM_EMAIL`. action_type `email` (priority over SMTP when configured). `src/dri/connectors/sendgrid_email.py`. `sendgrid>=6.0.0` added.
+- [x] **#4 Connector: LinkedIn** — `LINKEDIN_ACCESS_TOKEN + LINKEDIN_PERSON_URN`. `social_post` (feed via UGC Posts API) + `linkedin_message` (clair error: Partner API requis). `src/dri/connectors/linkedin.py`. Pas de dep supplémentaire (httpx).
+- [ ] tests/integration/ — full end-to-end pitch test (requires API key)
 - [ ] Next.js frontend (optional, post-MVP)
 
 ---
@@ -421,7 +435,8 @@ uv run pytest            # run tests
 
 - **Read the full file before touching anything.**
 - The active company for this project is **Momentum** (persistent company in DB).
-  Workspace: `workspace/momentum/`. Use `uv run dri company list` to get the ID.
+  ID: `32a617d7-ecd9-4375-b72c-c10cbb065eba`. Workspace: `workspace/momentum/`.
+  Use `uv run dri company list` to confirm the active company.
 - **LangGraph is NOT used** despite being in the architecture table. `graph.py` is a skeleton.
   Don't add LangGraph code without user approval.
 - `settings.py` singleton: `from dri.config.settings import settings` or `get_settings()`.
@@ -431,3 +446,7 @@ uv run pytest            # run tests
 - The `docs/` folder is gitignored (personal notes). Do not commit anything there.
 - Workspace files in `shared/_pending_approvals.json` are the approval queue — do not modify manually.
 - `_wip/` folders are auto-deleted by the framework — never rely on their contents persisting.
+- **Connectors** (`src/dri/connectors/`): self-register at import. Pattern: `ConnectorRegistry.register(MyConnector())` at module bottom + import in `__init__.py`. See `project_connectors.md` in memory.
+- **propose_external_action**: `content` must be the full text of the action — never a file reference. `action_type` must be in `_VALID_TYPES` (validated at runtime). Enum: `email`, `webhook`, `linkedin_message`, `social_post`, `phone_call`, `outreach_message`, `bulk_file_delete`, `other`.
+- **Approval dispatch**: after founder approves (non-bulk_file_delete), `cli.py` calls `ConnectorRegistry.get_for(action_type, action)` → connector executes immediately → result shown in terminal.
+- **Windows UTF-8**: `cli.py` sets `sys.stdout` to UTF-8 + `Console(legacy_windows=False)` to avoid cp1252 crash with Rich spinners.
