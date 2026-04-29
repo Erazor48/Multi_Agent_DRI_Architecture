@@ -249,6 +249,7 @@ class BaseAgent(ABC):
         return final_text or "Maximum tool call rounds reached."
 
     _FILE_TOOLS = {"file_read", "file_write", "file_list", "file_delete"}
+    _SHELL_TOOLS = {"shell_exec"}
     _EXTERNAL_TOOLS = {"propose_external_action"}
 
     async def _execute_tool(self, tool_call: Any, task_id: str) -> dict[str, Any]:
@@ -266,6 +267,11 @@ class BaseAgent(ABC):
                 p.model_dump() for p in self._ctx.workspace_permissions
             ]
 
+        # Inject workspace root into shell exec (cwd sandbox enforcement)
+        if tool_name in self._SHELL_TOOLS and self._ctx.workspace_root:
+            tool_input["_workspace_root"] = self._ctx.workspace_root
+            tool_input["_agent_id"] = self.agent_id
+
         # Inject agent identity into external action tools
         if tool_name in self._EXTERNAL_TOOLS:
             tool_input["_workspace_root"] = self._ctx.workspace_root
@@ -275,7 +281,12 @@ class BaseAgent(ABC):
         # Surface tool activity to the outer observer (CLI spinner / status line).
         spawner_ref = getattr(self, "_spawner_ref", None)
         if spawner_ref is not None:
-            preview = tool_input.get("path") or tool_input.get("query", "")[:40] or ""
+            preview = (
+                tool_input.get("path")
+                or tool_input.get("command", "")[:40]
+                or tool_input.get("query", "")[:40]
+                or ""
+            )
             label = f"{preview}" if preview else ""
             spawner_ref.report_progress(
                 f"[{self._ctx.title}] {tool_name}" + (f": {label}" if label else "")

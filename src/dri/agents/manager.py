@@ -57,7 +57,13 @@ _ORG_PLAN_TOOL = {
                         "tools": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Tool names: web_search, code_exec, file_read, file_write, file_list, file_delete, propose_external_action",
+                            "description": (
+                                "Tool names to grant: web_search, code_exec, shell_exec, "
+                                "file_read, file_write, file_list, file_delete, propose_external_action. "
+                                "Grant shell_exec to workers who need to run system commands "
+                                "(e.g. scaffold a Next.js app with bun, process media with ffmpeg, "
+                                "run builds, install dependencies)."
+                            ),
                         },
                         "budget_share": {
                             "type": "number",

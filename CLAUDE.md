@@ -201,6 +201,7 @@ All tools registered in `ToolRegistry` at import time via `dri/tools/__init__.py
 |---|---|---|
 | `web_search` | Search the web | Requires TAVILY_API_KEY or BRAVE_API_KEY |
 | `code_exec` | Execute Python in sandboxed subprocess | |
+| `shell_exec` | Run system commands within the workspace | Allowlist: bun, bunx, npx, npm, node, uv, python, python3, ffmpeg, ffprobe, git, magick, convert. CWD always inside workspace. No `shell=True`. Timeout max 300s. |
 | `file_read` | Read a file from workspace | RBAC enforced |
 | `file_write` | Write/overwrite/append a file | RBAC enforced, creates parent dirs |
 | `file_list` | List files in a directory | RBAC enforced |
@@ -406,7 +407,8 @@ uv run pytest            # run tests
 - [x] src/dri/tools/code_exec.py
 - [x] src/dri/tools/file_ops.py — file_read / file_write / file_list / file_delete + RBAC. File handle uses context manager. Delete counter is per-agent-per-folder (keyed by `_agent_id`).
 - [x] src/dri/tools/external_actions.py — propose_external_action + enum validation + content check. action_id is now UUID string (no race condition).
-- [x] src/dri/agents/base.py — _cleanup_wip / _inventory_dept_files / _fail_report enriched. Injects `_agent_id` into file tool calls.
+- [x] src/dri/tools/shell_exec.py — shell_exec tool: allowlisted executables (bun/uv/ffmpeg/git/node/…), CWD sandboxed to workspace, no shell=True, 300s max timeout, 20k char output cap.
+- [x] src/dri/agents/base.py — _cleanup_wip / _inventory_dept_files / _fail_report enriched. Injects `_agent_id` into file tool calls. `_SHELL_TOOLS` set injects `_workspace_root` into shell_exec.
 - [x] src/dri/agents/root.py — fixed __import__ → proper top-level imports
 - [x] src/dri/agents/manager.py — synthesis uses agentic loop (can read files). _plan_org retries once with stricter prompt if LLM skips tool call.
 - [x] src/dri/agents/worker.py

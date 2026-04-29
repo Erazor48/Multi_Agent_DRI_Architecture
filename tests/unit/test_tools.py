@@ -101,6 +101,102 @@ async def test_path_traversal_blocked(workspace_dir):
 
 
 @pytest.mark.asyncio
+async def test_shell_exec_simple(workspace_dir):
+    from dri.tools.base import ToolRegistry
+    tool = ToolRegistry.get("shell_exec")
+    result = await tool.execute({
+        "command": "python -c \"print('hello from shell')\"",
+        "_workspace_root": str(workspace_dir),
+    })
+    assert result.success, result.error
+    assert "hello from shell" in result.data
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_blocked_executable(workspace_dir):
+    from dri.tools.base import ToolRegistry
+    tool = ToolRegistry.get("shell_exec")
+    result = await tool.execute({
+        "command": "curl https://example.com",
+        "_workspace_root": str(workspace_dir),
+    })
+    assert not result.success
+    assert "allowlist" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_cwd_sandbox(workspace_dir):
+    from dri.tools.base import ToolRegistry
+    tool = ToolRegistry.get("shell_exec")
+    result = await tool.execute({
+        "command": "python -c \"import os; print(os.getcwd())\"",
+        "cwd": ".",
+        "_workspace_root": str(workspace_dir),
+    })
+    assert result.success, result.error
+    # cwd must be inside workspace
+    assert str(workspace_dir).lower().replace("\\", "/") in result.data.lower().replace("\\", "/")
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_cwd_traversal_blocked(workspace_dir):
+    from dri.tools.base import ToolRegistry
+    tool = ToolRegistry.get("shell_exec")
+    result = await tool.execute({
+        "command": "python -c \"print('x')\"",
+        "cwd": "../../",
+        "_workspace_root": str(workspace_dir),
+    })
+    assert not result.success
+    assert "workspace" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_creates_cwd(workspace_dir):
+    from dri.tools.base import ToolRegistry
+    tool = ToolRegistry.get("shell_exec")
+    subdir = "new_project/src"
+    result = await tool.execute({
+        "command": "python -c \"print('ok')\"",
+        "cwd": subdir,
+        "_workspace_root": str(workspace_dir),
+    })
+    assert result.success, result.error
+    assert (workspace_dir / "new_project" / "src").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_nonexistent_executable(workspace_dir):
+    from dri.tools.base import ToolRegistry
+    tool = ToolRegistry.get("shell_exec")
+    # 'git' is in allowlist but may or may not be installed; use 'bun' which may not be
+    # Instead test with a genuinely missing binary by temporarily patching the allowlist
+    import dri.tools.shell_exec as se_module
+    original = se_module._ALLOWED_EXECUTABLES
+    se_module._ALLOWED_EXECUTABLES = frozenset({"__nonexistent_binary__"})
+    try:
+        result = await tool.execute({
+            "command": "__nonexistent_binary__ --help",
+            "_workspace_root": str(workspace_dir),
+        })
+        assert not result.success
+    finally:
+        se_module._ALLOWED_EXECUTABLES = original
+
+
+@pytest.mark.asyncio
+async def test_shell_exec_failed_exit_code(workspace_dir):
+    from dri.tools.base import ToolRegistry
+    tool = ToolRegistry.get("shell_exec")
+    result = await tool.execute({
+        "command": "python -c \"import sys; sys.exit(1)\"",
+        "_workspace_root": str(workspace_dir),
+    })
+    assert not result.success
+    assert "exit" in result.error.lower() or "code" in result.error.lower()
+
+
+@pytest.mark.asyncio
 async def test_web_search_no_api_key(monkeypatch):
     # web_search.py binds `settings` at import time, so we patch the module variable directly.
     from types import SimpleNamespace
