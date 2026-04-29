@@ -456,6 +456,11 @@ class BaseAgent(ABC):
             task_repo = TaskRepository(db)
             await task_repo.fail(task_id, error)
 
+    # Directories whose contents are never useful to cite in agent reports.
+    _INVENTORY_SKIP_DIRS = frozenset({
+        "node_modules", ".next", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".cache",
+    })
+
     def _inventory_shared_files(self) -> list[str]:
         """List files in shared/ — readable by all agents, used to ground synthesis reports."""
         if not self._ctx.workspace_root:
@@ -467,7 +472,7 @@ class BaseAgent(ABC):
         return sorted(
             str(f.relative_to(root))
             for f in shared_dir.rglob("*")
-            if f.is_file()
+            if f.is_file() and not any(p in self._INVENTORY_SKIP_DIRS for p in f.parts)
         )
 
     def _inventory_dept_files(self) -> list[str]:
@@ -481,17 +486,22 @@ class BaseAgent(ABC):
         if not self._ctx.workspace_root:
             return []
         root = Path(self._ctx.workspace_root)
-        # Full workspace access — return all files so synthesis cannot cite phantom files
         _INFRA_FILES = {"_audit.log", "_pending_approvals.json"}
+
+        def _keep(f: Path) -> bool:
+            return (
+                f.is_file()
+                and "_wip" not in f.parts
+                and f.name not in _INFRA_FILES
+                and not any(p in self._INVENTORY_SKIP_DIRS for p in f.parts)
+            )
+
+        # Full workspace access — return all files so synthesis cannot cite phantom files
         for perm in self._ctx.workspace_permissions:
             if perm.path == "" and perm.can_write and perm.can_delete:
                 if not root.exists():
                     return []
-                return sorted(
-                    f.relative_to(root).as_posix()
-                    for f in root.rglob("*")
-                    if f.is_file() and "_wip" not in f.parts and f.name not in _INFRA_FILES
-                )
+                return sorted(f.relative_to(root).as_posix() for f in root.rglob("*") if _keep(f))
         # Normal RBAC — own department folder only
         own_dept: str | None = None
         for perm in self._ctx.workspace_permissions:
@@ -503,12 +513,7 @@ class BaseAgent(ABC):
         dept_dir = root / own_dept.rstrip("/")
         if not dept_dir.exists():
             return []
-        _INFRA_FILES = {"_audit.log", "_pending_approvals.json"}
-        return sorted(
-            f.relative_to(root).as_posix()
-            for f in dept_dir.rglob("*")
-            if f.is_file() and "_wip" not in f.parts and f.name not in _INFRA_FILES
-        )
+        return sorted(f.relative_to(root).as_posix() for f in dept_dir.rglob("*") if _keep(f))
 
     def _fail_report(self, task: Task, error: str) -> ReportMessage:
         files = self._inventory_dept_files()
