@@ -74,6 +74,10 @@ class BaseAgent(ABC):
         self._model = context.model or settings.default_model
         self._pending_reports: asyncio.Queue[ReportMessage] = asyncio.Queue()
         self._pending_escalations: asyncio.Queue[EscalateMessage] = asyncio.Queue()
+        # Elastic timeout: holds the active asyncio.Timeout context so shell_exec
+        # can extend the deadline by the actual shell execution time.
+        self._timeout_ctx: asyncio.Timeout | None = None
+        self._shell_time_bonus: float = 0.0  # total seconds granted to shell commands
 
         self._bus.subscribe(self._ctx.agent_id, self._on_message)
 
@@ -97,10 +101,13 @@ class BaseAgent(ABC):
             await task_repo.set_in_progress(task.id)
 
         try:
-            result = await asyncio.wait_for(
-                self._run_task(task),
-                timeout=settings.agent_timeout_seconds,
-            )
+            # Elastic timeout: the deadline extends automatically whenever shell_exec
+            # runs, so heavy commands (bun install, builds) don't consume the LLM budget.
+            # Only pure LLM thinking + lightweight tool calls count toward the base limit.
+            async with asyncio.timeout(settings.agent_timeout_seconds) as self._timeout_ctx:
+                result = await self._run_task(task)
+            self._timeout_ctx = None
+
             self._cleanup_wip()
             await self._set_status(AgentStatus.DONE)
             alloc = self._budget_manager.get_allocation(self.agent_id)
@@ -116,15 +123,21 @@ class BaseAgent(ABC):
             await self._persist_task_done(task.id, result)
             return report
 
-        except asyncio.TimeoutError:
-            error = f"Agent {self._ctx.title} timed out after {settings.agent_timeout_seconds}s."
+        except TimeoutError:
+            base = settings.agent_timeout_seconds
+            bonus = self._shell_time_bonus
+            total = int(base + bonus)
+            detail = f" ({int(base)}s base + {int(bonus)}s shell)" if bonus > 0 else ""
+            error = f"Agent {self._ctx.title} timed out after {total}s{detail}."
+            self._timeout_ctx = None
             await self._set_status(AgentStatus.FAILED, error=error)
             await self._persist_task_failed(task.id, error)
-            self._cleanup_wip()  # remove WIP first so inventory only shows deliverables
+            self._cleanup_wip()
             return self._fail_report(task, error)
 
         except BudgetExceededError as e:
             error = str(e)
+            self._timeout_ctx = None
             await self._set_status(AgentStatus.FAILED, error=error)
             await self._persist_task_failed(task.id, error)
             self._cleanup_wip()
@@ -132,12 +145,14 @@ class BaseAgent(ABC):
 
         except Exception as e:
             error = f"{type(e).__name__}: {e}"
+            self._timeout_ctx = None
             await self._set_status(AgentStatus.FAILED, error=error)
             await self._persist_task_failed(task.id, error)
             self._cleanup_wip()
             return self._fail_report(task, error)
 
         finally:
+            self._timeout_ctx = None
             self._bus.unsubscribe(self.agent_id)
 
     # ──────────────────────────────────────────────────────────
@@ -304,7 +319,17 @@ class BaseAgent(ABC):
             success = False
             result_str = f"Tool error: {e}"
 
-        duration_ms = int((time.time() - start) * 1000)
+        elapsed = time.time() - start
+        duration_ms = int(elapsed * 1000)
+
+        # Elastic timeout: extend the agent deadline by the actual shell execution time.
+        # This ensures bun installs, builds, and other heavy commands don't consume
+        # the LLM thinking budget — only real LLM+logic time counts toward the limit.
+        if tool_name in self._SHELL_TOOLS and self._timeout_ctx is not None:
+            when = self._timeout_ctx.when()
+            if when is not None:
+                self._timeout_ctx.reschedule(when + elapsed)
+                self._shell_time_bonus += elapsed
 
         async with get_session() as db:
             tc_repo = ToolCallRepository(db)
