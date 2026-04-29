@@ -48,7 +48,7 @@ class GeminiProvider(BaseLLMProvider):
         else:
             self._client = genai.Client(api_key=api_key)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=30), reraise=True)
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(multiplier=2, min=5, max=60), reraise=True)
     async def call(
         self,
         *,
