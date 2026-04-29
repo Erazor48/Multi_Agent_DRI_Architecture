@@ -165,11 +165,17 @@ class FileWriteTool(BaseTool):
             return ToolOutput.fail(f"Failed to write: {e}")
 
 
+_LIST_SKIP_DIRS = frozenset({
+    "node_modules", ".next", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".cache",
+})
+
+
 class FileListTool(BaseTool):
     name = "file_list"
     description = (
         "List files in a workspace directory. "
-        "Use '.' for the root. Returns file paths relative to the workspace."
+        "Use '.' for the root. Returns file paths relative to the workspace. "
+        "Build artifacts (node_modules, .next, dist, etc.) are excluded automatically."
     )
     input_schema = {
         "type": "object",
@@ -199,8 +205,18 @@ class FileListTool(BaseTool):
 
         root = Path(workspace_root).resolve() if workspace_root else _get_workspace()
         try:
-            iterator = path.rglob("*") if recursive else path.iterdir()
-            files = sorted(str(f.relative_to(root)) for f in iterator if f.is_file())
+            if recursive:
+                files = sorted(
+                    str(f.relative_to(root))
+                    for f in path.rglob("*")
+                    if f.is_file() and not any(p in _LIST_SKIP_DIRS for p in f.parts)
+                )
+            else:
+                files = sorted(
+                    str(f.relative_to(root))
+                    for f in path.iterdir()
+                    if f.is_file()
+                )
             return ToolOutput.ok(files)
         except Exception as e:
             return ToolOutput.fail(f"Failed to list: {e}")
@@ -230,6 +246,8 @@ class FileDeleteTool(BaseTool):
     # Class-level dict is intentional — it's the registry. Each key is unique per agent.
     _delete_counts: dict[str, int] = {}
     _BULK_DELETE_THRESHOLD = 3
+    # Infrastructure files created by the framework — never deletable by agents.
+    _PROTECTED_FILENAMES = frozenset({"_audit.log", "_pending_approvals.json"})
 
     async def execute(self, raw_input: dict[str, Any]) -> ToolOutput:
         import shutil
@@ -244,6 +262,11 @@ class FileDeleteTool(BaseTool):
 
         if permissions and not _check_permission(rel, permissions, "delete"):
             return ToolOutput.fail(f"Permission denied: delete on '{rel}'.")
+
+        if path is not None and path.name in self._PROTECTED_FILENAMES:
+            return ToolOutput.fail(
+                f"Protected file: '{rel}' is a framework infrastructure file and cannot be deleted by agents."
+            )
 
         if not path.exists():
             return ToolOutput.fail(f"Not found: {rel}")
