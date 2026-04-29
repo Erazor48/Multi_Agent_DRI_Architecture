@@ -435,12 +435,15 @@ def approvals_list(
         console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
         raise typer.Exit(1)
 
-    visible = actions if all_ else [a for a in actions if a["status"] == "pending"]
+    has_pending = any(a["status"] == "pending" for a in actions)
 
-    if not visible:
+    if not all_ and not has_pending:
         console.print("[dim]No pending approvals.[/dim]")
-        if not all_:
-            console.print("[dim]Use --all to see decided actions.[/dim]")
+        console.print("[dim]Use --all to see decided actions.[/dim]")
+        return
+
+    if all_ and not actions:
+        console.print("[dim]No approvals yet.[/dim]")
         return
 
     table = Table(title="Pending External Actions", show_lines=True)
@@ -453,10 +456,13 @@ def approvals_list(
 
     status_colors = {"pending": "yellow", "approved": "green", "rejected": "red"}
 
-    for pos, a in enumerate(visible, start=1):
+    # Always use global 1-based position so that show/approve/reject indices match.
+    for global_pos, a in enumerate(actions, start=1):
+        if not all_ and a["status"] != "pending":
+            continue
         color = status_colors.get(a["status"], "white")
         table.add_row(
-            str(pos),
+            str(global_pos),
             f"[{color}]{a['status']}[/{color}]",
             a.get("action_type", ""),
             a.get("proposed_by", ""),

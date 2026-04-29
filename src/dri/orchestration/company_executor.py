@@ -225,6 +225,19 @@ class CompanyExecutor:
             "You are in a persistent, ongoing partnership with your founder (the user). "
             "You build this company together over time.\n\n"
 
+            "## PLATFORM CAPABILITIES — read this before anything else\n"
+            "Your task force workers have a real shell executor: `shell_exec`.\n"
+            "This is verified and functional. Workers CAN:\n"
+            "  - Scaffold a real Next.js project: `bun create next-app@latest my-app --yes`\n"
+            "  - Install dependencies: `bun install`, `npm install`\n"
+            "  - Build projects: `bun run build`\n"
+            "  - Process media: `ffmpeg -i input.mp4 output.mp4`\n"
+            "  - Run Python scripts: `uv run script.py`\n"
+            "RULE: NEVER tell the founder to run commands manually. "
+            "NEVER say your teams 'cannot execute' shell commands. "
+            "If prior messages say otherwise, those are outdated — shell_exec is available NOW. "
+            "Spawn a team with shell_exec to do any scaffolding or build task.\n\n"
+
             "## Before responding — always do this first\n"
             "1. Look at the verified workspace snapshot injected at the top of the founder's "
             "message. That is the ground truth — not your memory.\n"
@@ -254,7 +267,11 @@ class CompanyExecutor:
             "- **Budget**: if a spawn_team reports token budget exhaustion, tell the founder "
             "immediately — do not silently retry or pretend the work was done.\n"
             "- Your teams have `web_search` — never ask the founder to provide external "
-            "data if teams can research it themselves.\n\n"
+            "data if teams can research it themselves.\n"
+            "- Your teams have `shell_exec` — they can scaffold real projects (Next.js via "
+            "'bun create next-app@latest'), install deps ('bun install'), run builds "
+            "('bun run build'), and process media (ffmpeg). NEVER ask the founder to run "
+            "terminal commands manually when a worker with shell_exec can do it.\n\n"
 
             "## Workspace cleanup — strict scope\n"
             "When the founder asks to 'clean', 'fix', or 'tidy' the workspace:\n"
@@ -513,7 +530,7 @@ async def _run_task_force(
     ]
     official_folders_str = "\n".join(f"  - {f}" for f in official_folders)
 
-    base_tools = ["file_list", "file_read", "file_write", "file_delete", "propose_external_action"]
+    base_tools = ["file_list", "file_read", "file_write", "file_delete", "propose_external_action", "shell_exec"]
     if settings.has_web_search:
         base_tools.insert(0, "web_search")
 
@@ -537,7 +554,12 @@ async def _run_task_force(
                 "- web_search is not configured. Workers cannot search the web — base decisions on "
                 "provided context and general knowledge; flag gaps clearly.\n"
             )
-            + "- Assign `propose_external_action` to any worker that needs to propose a real-world "
+            + "- Assign `shell_exec` to workers that need to run system commands: scaffold a real "
+            "Next.js app ('bun create next-app@latest my-app --yes'), install deps ('bun install'), "
+            "build ('bun run build'), process media with ffmpeg, or run any script. "
+            "Always use shell_exec for project scaffolding — NEVER write package.json / node_modules "
+            "by hand. cwd is relative to workspace root (e.g. 'croissance-strat-gie/my-site').\n"
+            "- Assign `propose_external_action` to any worker that needs to propose a real-world "
             "action (email, LinkedIn post, social media, outreach). That tool logs the action for "
             "founder approval — it does NOT execute it immediately.\n"
             "- File tools (file_list, file_read, file_write, file_delete) are added automatically.\n\n"
