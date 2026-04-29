@@ -468,10 +468,14 @@ def _workspace_snapshot(workspace_root: str) -> str:
     if not ws.exists():
         return "**Workspace snapshot:** (workspace not found)"
     _INFRA = {"_audit.log", "_pending_approvals.json"}
+    _SKIP_DIRS = {"node_modules", ".next", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".cache"}
     files = sorted(
         f.relative_to(ws).as_posix()
         for f in ws.rglob("*")
-        if f.is_file() and "_wip" not in f.parts and f.name not in _INFRA
+        if f.is_file()
+        and "_wip" not in f.parts
+        and f.name not in _INFRA
+        and not any(part in _SKIP_DIRS for part in f.parts)
     )
     if not files:
         return "**Workspace snapshot (verified on disk):** no files yet."
