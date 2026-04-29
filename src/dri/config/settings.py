@@ -29,8 +29,8 @@ class Settings(BaseSettings):
     # ── Gemini (AI Studio direct key) ────────────────────────────────────
     google_api_key: str = Field("", description="Google AI Studio API key (not needed for Vertex AI)")
     gemini_root_model: str = Field("gemini-2.5-pro", description="Model for CEO (most capable)")
-    gemini_default_model: str = Field("gemini-2.5-pro", description="Model for all other agents")
-    # gemini_default_model: str = Field("gemini-2.5-flash", description="Model for all other agents")
+    gemini_default_model: str = Field("gemini-2.5-flash", description="Model for all other agents")
+    # gemini_default_model: str = Field("gemini-2.5-pro", description="Model for all other agents")
 
     # ── Vertex AI (service account — alternative to API key) ─────────────
     use_vertex_ai: bool = Field(False, description="Use Vertex AI instead of AI Studio")
