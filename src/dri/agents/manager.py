@@ -161,11 +161,15 @@ class ManagerAgent(BaseAgent):
         # Step 3: Spawn agents and run them in parallel
         await self._registry.update_status(self.agent_id, AgentStatus.WAITING)
 
-        async def _spawn_and_run(req: SpawnRequest, task_description: str) -> str:
+        async def _spawn_and_run(req: SpawnRequest, task_description: str) -> tuple[str, str | None]:
+            """Run one child agent. Returns (result_str, agent_id_of_last_spawn)."""
             from dri.storage.database import get_session
             from dri.storage.repositories import TaskRepository
 
-            async def _run_once(r: SpawnRequest):  # -> ReportMessage
+            last_agent_id: str | None = None
+
+            async def _run_once(r: SpawnRequest) -> "ReportMessage":  # type: ignore[name-defined]
+                nonlocal last_agent_id
                 child_task = Task(
                     description=task_description,
                     context=f"Parent context:\n{task.context}" if task.context else "",
@@ -180,6 +184,7 @@ class ManagerAgent(BaseAgent):
                         "Do not scope beyond your assigned task.",
                     ],
                 )
+                last_agent_id = child_agent.agent_id
                 child_task.assigned_to = child_agent.agent_id
                 async with get_session() as db:
                     task_repo = TaskRepository(db)
@@ -201,17 +206,47 @@ class ManagerAgent(BaseAgent):
                 if retry_budget > req.budget_tokens:
                     report = await _run_once(req.model_copy(update={"budget_tokens": retry_budget}))
 
-            return f"**{req.title}**: {report.result}" if report.result else f"**{req.title}**: [no result]"
+            result_str = f"**{req.title}**: {report.result}" if report.result else f"**{req.title}**: [no result]"
+            return result_str, last_agent_id
 
-        results = await asyncio.gather(
+        results_raw = await asyncio.gather(
             *[_spawn_and_run(req, task_desc) for req, task_desc in spawn_requests],
             return_exceptions=True,
         )
 
+        # Unpack (result_str, agent_id) pairs
+        result_strs: list[str] = []
+        agent_ids: list[str | None] = []
+        for r in results_raw:
+            if isinstance(r, Exception):
+                result_strs.append(f"[Error: {r}]")
+                agent_ids.append(None)
+            else:
+                result_strs.append(r[0])
+                agent_ids.append(r[1])
+
+        # Budget borrowing: pool unused tokens from completed workers, then retry
+        # any that failed exclusively due to budget exhaustion.
+        pool = 0
+        for aid in agent_ids:
+            if aid:
+                pool += await self._spawner._budget_manager.return_unused(aid)
+
+        if pool > 10_000:
+            budget_failed_indices = [
+                i for i, s in enumerate(result_strs)
+                if "INTERRUPTED" in s and "budget" in s.lower()
+            ]
+            if budget_failed_indices:
+                extra = pool // len(budget_failed_indices)
+                for i in budget_failed_indices:
+                    req, task_desc = spawn_requests[i]
+                    retry_req = req.model_copy(update={"budget_tokens": req.budget_tokens + extra})
+                    retry_str, _ = await _spawn_and_run(retry_req, task_desc)
+                    result_strs[i] = retry_str
+
         # Step 4: Synthesize results
-        results_text = "\n\n".join(
-            r if isinstance(r, str) else f"[Error: {r}]" for r in results
-        )
+        results_text = "\n\n".join(result_strs)
         worker_titles = [req.title for req, _ in spawn_requests]
         return await self._synthesize(task, results_text, synthesis_approach, worker_titles)
 

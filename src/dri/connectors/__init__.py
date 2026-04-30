@@ -5,6 +5,7 @@ import dri.connectors.email_smtp      # noqa: F401  — SMTP fallback when SendG
 import dri.connectors.twilio_sms      # noqa: F401
 import dri.connectors.linkedin        # noqa: F401  — before webhook (social_post + linkedin_message)
 import dri.connectors.slack_bot       # noqa: F401  — Slack Bot API (before webhook, more specific)
+import dri.connectors.github          # noqa: F401  — GitHub push/PR/repo
 import dri.connectors.webhook         # noqa: F401
 
 from dri.connectors.base import BaseConnector, ConnectorResult

@@ -99,6 +99,26 @@ class BudgetManager:
             ):
                 raise BudgetWarning(agent_id, alloc.fraction_remaining)
 
+    async def return_unused(self, agent_id: str) -> int:
+        """
+        Return the agent's unused tokens to the caller and zero out its remaining allocation.
+        Called after a child completes so the parent can redistribute the surplus to siblings.
+        """
+        async with self._lock:
+            alloc = self._allocations.get(agent_id)
+            if alloc is None:
+                return 0
+            unused = alloc.remaining
+            alloc.total = alloc.used  # zero out remaining without touching used
+            return unused
+
+    async def add_to_allocation(self, agent_id: str, extra_tokens: int) -> None:
+        """Add tokens to an existing agent's allocation (budget recovery / borrowing)."""
+        async with self._lock:
+            alloc = self._allocations.get(agent_id)
+            if alloc and extra_tokens > 0:
+                alloc.total += extra_tokens
+
     async def record_actual(self, agent_id: str, estimated: int, actual: int) -> None:
         """Adjust after we know the real token count (API response)."""
         diff = actual - estimated

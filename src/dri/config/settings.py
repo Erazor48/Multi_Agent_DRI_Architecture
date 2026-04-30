@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     def has_slack(self) -> bool:
         return bool(self.slack_bot_token)
 
+    # ── GitHub connector ──────────────────────────────────────────────────
+    github_token: str = Field("", description="GitHub personal access token or fine-grained token")
+
+    @property
+    def has_github(self) -> bool:
+        return bool(self.github_token)
+
     # ── Email connector (SMTP) ────────────────────────────────────────────
     smtp_host: str = Field("", description="SMTP server host (e.g. smtp.gmail.com)")
     smtp_port: int = Field(587, description="SMTP port: 587=STARTTLS (default), 465=SSL, 25=plain")

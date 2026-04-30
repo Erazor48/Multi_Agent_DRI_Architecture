@@ -496,3 +496,282 @@ async def test_propose_invalid_type_rejected(tmp_path):
     })
     assert not result.success
     assert "Invalid action_type" in result.error
+
+
+# ─── GitHub connector ─────────────────────────────────────────────────────────
+
+class TestGitHubCanHandle:
+    def _connector(self):
+        from dri.connectors.github import GitHubConnector
+        return GitHubConnector()
+
+    def test_handles_github_push(self):
+        assert self._connector().can_handle("github_push", {})
+
+    def test_handles_github_create_pr(self):
+        assert self._connector().can_handle("github_create_pr", {})
+
+    def test_handles_github_create_repo(self):
+        assert self._connector().can_handle("github_create_repo", {})
+
+    def test_rejects_email(self):
+        assert not self._connector().can_handle("email", {})
+
+    def test_rejects_webhook(self):
+        assert not self._connector().can_handle("webhook", {})
+
+
+class TestGitHubIsConfigured:
+    def test_unconfigured_when_no_token(self):
+        from dri.connectors.github import GitHubConnector
+        from types import SimpleNamespace
+        with patch("dri.connectors.github.settings", SimpleNamespace(has_github=False, github_token="")):
+            assert not GitHubConnector().is_configured
+
+    def test_configured_when_token_present(self):
+        from dri.connectors.github import GitHubConnector
+        from types import SimpleNamespace
+        with patch("dri.connectors.github.settings", SimpleNamespace(has_github=True, github_token="ghp_test")):
+            assert GitHubConnector().is_configured
+
+
+@pytest.mark.asyncio
+async def test_github_unconfigured_returns_error():
+    from dri.connectors.github import GitHubConnector
+    from types import SimpleNamespace
+    with patch("dri.connectors.github.settings", SimpleNamespace(has_github=False, github_token="")):
+        result = await GitHubConnector().execute({"action_type": "github_push", "recipient": "owner/repo"})
+    assert not result.success
+    assert "not configured" in result.message
+
+
+@pytest.mark.asyncio
+async def test_github_push_missing_repo():
+    from dri.connectors.github import GitHubConnector
+    from types import SimpleNamespace
+    with patch("dri.connectors.github.settings", SimpleNamespace(has_github=True, github_token="tok")):
+        result = await GitHubConnector().execute({
+            "action_type": "github_push",
+            "recipient": "",   # missing
+            "subject": "main:src/app.py",
+            "content": "print('hello')",
+            "rationale": "add file",
+        })
+    assert not result.success
+    assert "owner/repo" in result.message
+
+
+@pytest.mark.asyncio
+async def test_github_push_new_file_success():
+    from dri.connectors.github import GitHubConnector
+    from types import SimpleNamespace
+
+    configured = SimpleNamespace(has_github=True, github_token="ghp_fake")
+    get_resp = _httpx_response(404)  # file doesn't exist yet
+    put_resp = _httpx_response(201)
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    # GET check returns 404, then PUT creates file
+    mock_client.get = AsyncMock(return_value=get_resp)
+    mock_client.put = AsyncMock(return_value=put_resp)
+
+    with patch("dri.connectors.github.settings", configured), \
+         patch("dri.connectors.github.httpx.AsyncClient", return_value=mock_client):
+        result = await GitHubConnector().execute({
+            "action_type": "github_push",
+            "recipient": "myorg/myrepo",
+            "subject": "main:src/app.py",
+            "content": "print('hello')",
+            "rationale": "add app.py",
+        })
+
+    assert result.success
+    assert "Created" in result.message
+    assert "src/app.py" in result.message
+
+
+@pytest.mark.asyncio
+async def test_github_push_update_existing_file():
+    from dri.connectors.github import GitHubConnector
+    from types import SimpleNamespace
+
+    configured = SimpleNamespace(has_github=True, github_token="ghp_fake")
+    get_resp = _httpx_response(200, {"sha": "abc123def456"})
+    put_resp = _httpx_response(200)
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.get = AsyncMock(return_value=get_resp)
+    mock_client.put = AsyncMock(return_value=put_resp)
+
+    with patch("dri.connectors.github.settings", configured), \
+         patch("dri.connectors.github.httpx.AsyncClient", return_value=mock_client):
+        result = await GitHubConnector().execute({
+            "action_type": "github_push",
+            "recipient": "myorg/myrepo",
+            "subject": "main:src/app.py",
+            "content": "print('updated')",
+            "rationale": "update app.py",
+        })
+
+    assert result.success
+    assert "Updated" in result.message
+    # SHA should have been passed to the PUT call
+    put_payload = mock_client.put.call_args.kwargs["json"]
+    assert put_payload["sha"] == "abc123def456"
+
+
+@pytest.mark.asyncio
+async def test_github_create_pr_success_with_json_content():
+    from dri.connectors.github import GitHubConnector
+    from types import SimpleNamespace
+    import json
+
+    configured = SimpleNamespace(has_github=True, github_token="ghp_fake")
+    pr_body = json.dumps({"head": "feature-x", "base": "main", "body": "Adds feature X"})
+    resp = _httpx_response(201, {"number": 42, "html_url": "https://github.com/myorg/myrepo/pull/42"})
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=resp)
+
+    with patch("dri.connectors.github.settings", configured), \
+         patch("dri.connectors.github.httpx.AsyncClient", return_value=mock_client):
+        result = await GitHubConnector().execute({
+            "action_type": "github_create_pr",
+            "recipient": "myorg/myrepo",
+            "subject": "Add feature X",
+            "content": pr_body,
+            "rationale": "new feature",
+        })
+
+    assert result.success
+    assert "42" in result.message
+    assert result.external_id == "42"
+
+
+@pytest.mark.asyncio
+async def test_github_create_pr_same_head_base_rejected():
+    from dri.connectors.github import GitHubConnector
+    from types import SimpleNamespace
+    import json
+
+    configured = SimpleNamespace(has_github=True, github_token="ghp_fake")
+    pr_body = json.dumps({"head": "main", "base": "main", "body": "oops"})
+
+    with patch("dri.connectors.github.settings", configured):
+        result = await GitHubConnector().execute({
+            "action_type": "github_create_pr",
+            "recipient": "myorg/myrepo",
+            "subject": "Bad PR",
+            "content": pr_body,
+            "rationale": "test",
+        })
+
+    assert not result.success
+    assert "head and base" in result.message
+
+
+@pytest.mark.asyncio
+async def test_github_create_repo_success():
+    from dri.connectors.github import GitHubConnector
+    from types import SimpleNamespace
+
+    configured = SimpleNamespace(has_github=True, github_token="ghp_fake")
+    resp = _httpx_response(201, {
+        "full_name": "myorg/new-repo",
+        "html_url": "https://github.com/myorg/new-repo",
+    })
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=resp)
+
+    with patch("dri.connectors.github.settings", configured), \
+         patch("dri.connectors.github.httpx.AsyncClient", return_value=mock_client):
+        result = await GitHubConnector().execute({
+            "action_type": "github_create_repo",
+            "recipient": "myorg",
+            "subject": "new-repo",
+            "content": "A brand new repository",
+            "rationale": "start fresh",
+        })
+
+    assert result.success
+    assert "myorg/new-repo" in result.message
+    # Should use org endpoint when recipient is set
+    call_url = mock_client.post.call_args.args[0]
+    assert "orgs/myorg" in call_url
+
+
+@pytest.mark.asyncio
+async def test_github_create_repo_personal_account():
+    from dri.connectors.github import GitHubConnector
+    from types import SimpleNamespace
+
+    configured = SimpleNamespace(has_github=True, github_token="ghp_fake")
+    resp = _httpx_response(201, {
+        "full_name": "ethan/my-repo",
+        "html_url": "https://github.com/ethan/my-repo",
+    })
+
+    mock_client = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.post = AsyncMock(return_value=resp)
+
+    with patch("dri.connectors.github.settings", configured), \
+         patch("dri.connectors.github.httpx.AsyncClient", return_value=mock_client):
+        result = await GitHubConnector().execute({
+            "action_type": "github_create_repo",
+            "recipient": "",   # personal account
+            "subject": "my-repo",
+            "content": "Personal repo",
+            "rationale": "personal project",
+        })
+
+    assert result.success
+    # Should use /user/repos endpoint
+    call_url = mock_client.post.call_args.args[0]
+    assert "/user/repos" in call_url
+
+
+@pytest.mark.asyncio
+async def test_github_propose_push_action_type_accepted(tmp_path):
+    """propose_external_action accepts github_push as a valid action_type."""
+    from dri.tools.base import ToolRegistry
+    tool = ToolRegistry.get("propose_external_action")
+    result = await tool.execute({
+        "_workspace_root": str(tmp_path),
+        "_agent_title": "Backend Developer",
+        "_company_name": "TestCo",
+        "action_type": "github_push",
+        "recipient": "myorg/myrepo",
+        "subject": "main:src/app.py",
+        "content": "print('hello world')",
+        "rationale": "Push initial app file to repo",
+    })
+    assert result.success
+
+
+@pytest.mark.asyncio
+async def test_github_propose_create_repo_type_accepted(tmp_path):
+    """propose_external_action accepts github_create_repo as a valid action_type."""
+    from dri.tools.base import ToolRegistry
+    tool = ToolRegistry.get("propose_external_action")
+    result = await tool.execute({
+        "_workspace_root": str(tmp_path),
+        "_agent_title": "CTO",
+        "_company_name": "TestCo",
+        "action_type": "github_create_repo",
+        "recipient": "myorg",
+        "subject": "new-project",
+        "content": "A new project repository",
+        "rationale": "Start new GitHub project",
+    })
+    assert result.success

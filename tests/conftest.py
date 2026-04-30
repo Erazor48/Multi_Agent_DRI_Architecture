@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from typing import Any
 
 import pytest
 import pytest_asyncio
@@ -31,3 +32,54 @@ async def db_session():
     async with get_session() as session:
         yield session
     await drop_db()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MockLLMProvider — scripted responses for integration tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+class MockLLMProvider:
+    """
+    Scripted LLM provider for integration and unit tests.
+    Returns responses from the queue; falls back to a plain text response.
+    """
+
+    def __init__(self, responses: list[Any] | None = None) -> None:
+        from dri.llm.base import LLMResponse
+        self._responses: list[Any] = responses or []
+        self._fallback = LLMResponse(text="(mock response)")
+        self._call_count = 0
+
+    async def call(
+        self,
+        *,
+        system: str,
+        messages: list[dict],
+        tools: list[dict] | None,
+        model: str,
+        max_tokens: int,
+    ) -> Any:
+        if self._call_count < len(self._responses):
+            r = self._responses[self._call_count]
+        else:
+            r = self._fallback
+        self._call_count += 1
+        return r
+
+
+def make_tool_response(tool_name: str, tool_input: dict) -> Any:
+    """Build a LLMResponse with a single tool call."""
+    from dri.llm.base import LLMResponse, ToolCall
+    return LLMResponse(
+        text="",
+        tool_calls=[ToolCall(id="tc-mock-1", name=tool_name, input=tool_input)],
+        input_tokens=100,
+        output_tokens=200,
+        stop_reason="tool_use",
+    )
+
+
+def make_text_response(text: str) -> Any:
+    """Build a LLMResponse with plain text."""
+    from dri.llm.base import LLMResponse
+    return LLMResponse(text=text, input_tokens=50, output_tokens=100)

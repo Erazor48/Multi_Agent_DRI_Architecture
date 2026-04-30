@@ -48,6 +48,9 @@ class ProposeExternalActionTool(BaseTool):
                     "phone_call",
                     "outreach_message",
                     "bulk_file_delete",
+                    "github_push",
+                    "github_create_pr",
+                    "github_create_repo",
                     "other",
                 ],
                 "description": (
@@ -60,7 +63,13 @@ class ProposeExternalActionTool(BaseTool):
                     "(recipient = the full webhook URL). "
                     "Use 'social_post' for social media content. "
                     "Use 'bulk_file_delete' when file_delete is blocked by the bulk guard — "
-                    "list every file path in content."
+                    "list every file path in content. "
+                    "Use 'github_push' to push a file to a GitHub repo "
+                    "(recipient=owner/repo, subject=branch:path/to/file, content=file_content, rationale=commit_message). "
+                    "Use 'github_create_pr' to open a pull request "
+                    "(recipient=owner/repo, subject=PR_title, content=JSON with head/base/body). "
+                    "Use 'github_create_repo' to create a new repository "
+                    "(recipient=org_or_empty, subject=repo_name, content=description)."
                 ),
             },
             "recipient": {
@@ -90,7 +99,7 @@ class ProposeExternalActionTool(BaseTool):
     }
 
     _VALID_TYPES = frozenset(
-        {"email", "sms", "webhook", "slack_message", "linkedin_message", "social_post", "phone_call", "outreach_message", "bulk_file_delete", "other"}
+        {"email", "sms", "webhook", "slack_message", "linkedin_message", "social_post", "phone_call", "outreach_message", "bulk_file_delete", "github_push", "github_create_pr", "github_create_repo", "other"}
     )
 
     async def execute(self, raw_input: dict[str, Any]) -> ToolOutput:

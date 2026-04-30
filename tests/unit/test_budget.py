@@ -68,3 +68,68 @@ async def test_child_share_computation(budget):
     share = budget.compute_child_share("parent", 4)
     assert share > 0
     assert share <= 10_000
+
+
+# ─── Budget borrowing ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_return_unused_gives_back_remaining(budget):
+    await budget.allocate("worker", 5_000)
+    await budget.check_and_deduct("worker", 1_000)
+    unused = await budget.return_unused("worker")
+    assert unused == 4_000
+
+
+@pytest.mark.asyncio
+async def test_return_unused_zeroes_remaining(budget):
+    await budget.allocate("worker", 5_000)
+    await budget.check_and_deduct("worker", 2_000)
+    await budget.return_unused("worker")
+    alloc = budget.get_allocation("worker")
+    assert alloc.remaining == 0
+    assert alloc.used == 2_000  # used is preserved
+
+
+@pytest.mark.asyncio
+async def test_return_unused_missing_agent_returns_zero(budget):
+    result = await budget.return_unused("ghost")
+    assert result == 0
+
+
+@pytest.mark.asyncio
+async def test_add_to_allocation_increases_total(budget):
+    await budget.allocate("worker", 5_000)
+    await budget.add_to_allocation("worker", 3_000)
+    alloc = budget.get_allocation("worker")
+    assert alloc.total == 8_000
+    assert alloc.remaining == 8_000  # none used yet
+
+
+@pytest.mark.asyncio
+async def test_add_to_allocation_missing_agent_is_noop(budget):
+    await budget.add_to_allocation("ghost", 9_999)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_add_zero_is_noop(budget):
+    await budget.allocate("worker", 5_000)
+    await budget.add_to_allocation("worker", 0)
+    alloc = budget.get_allocation("worker")
+    assert alloc.total == 5_000
+
+
+@pytest.mark.asyncio
+async def test_borrow_redistribute_pattern(budget):
+    """Typical pattern: pool from completed workers, add to a budget-failed worker."""
+    await budget.allocate("worker-done", 50_000)
+    await budget.allocate("worker-failed", 10_000)
+
+    # worker-done used 15k of 50k → 35k unused
+    await budget.check_and_deduct("worker-done", 15_000)
+    pool = await budget.return_unused("worker-done")
+    assert pool == 35_000
+
+    # Give pool to failed worker
+    await budget.add_to_allocation("worker-failed", pool)
+    failed_alloc = budget.get_allocation("worker-failed")
+    assert failed_alloc.total == 45_000  # 10k + 35k
