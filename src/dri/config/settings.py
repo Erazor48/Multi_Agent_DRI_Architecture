@@ -52,7 +52,7 @@ class Settings(BaseSettings):
 
     # ── Budget ────────────────────────────────────────────────────────────
     budget_max_tokens_per_session: int = Field(2_000_000, ge=10_000)
-    budget_child_default_share: float = Field(0.4, gt=0.0, lt=1.0)
+    budget_child_default_share: float = Field(0.7, gt=0.0, lt=1.0)
     budget_warning_threshold: float = Field(0.2, gt=0.0, lt=1.0)
 
     # ── Tools ─────────────────────────────────────────────────────────────

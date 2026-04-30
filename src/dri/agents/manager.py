@@ -18,6 +18,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from dri.agents.base import BaseAgent
+from dri.config.settings import settings
 from dri.core.models import AgentRole, AgentStatus, SpawnRequest, Task
 from dri.skills.catalog import SkillCatalog
 
@@ -83,6 +84,17 @@ _ORG_PLAN_TOOL = {
 }
 
 
+def _estimate_floor(tools: list[str]) -> int:
+    """Minimum token budget per worker based on its assigned tools."""
+    if "shell_exec" in tools:
+        return 200_000   # scaffolding, builds, ffmpeg
+    if "web_search" in tools:
+        return 80_000    # research + synthesis
+    if "code_exec" in tools:
+        return 50_000    # Python scripts
+    return 30_000        # file ops + writing
+
+
 class ManagerAgent(BaseAgent):
     """
     A manager plans, delegates, supervises, and synthesizes.
@@ -109,13 +121,17 @@ class ManagerAgent(BaseAgent):
             return await self._direct_response(task)
 
         # Step 2: Spawn all team members — build all spawn requests first
-        my_budget = self._budget_manager.get_allocation(self.agent_id)
-        budget_per_child = self._spawner._budget_manager.compute_child_share(
-            self.agent_id, len(team_members)
-        )
+        parent_alloc = self._spawner._budget_manager.get_allocation(self.agent_id)
+        parent_remaining = parent_alloc.remaining if parent_alloc else 0
+        total_child_budget = int(parent_remaining * settings.budget_child_default_share)
+
+        # Proportional allocation: LLM can request more budget for heavy workers via budget_share.
+        # Shares are normalized so the total always sums to total_child_budget.
+        shares = [float(m.get("budget_share", 1.0)) for m in team_members]
+        total_share = sum(shares) or len(team_members)
 
         spawn_requests = []
-        for member in team_members:
+        for member, share in zip(team_members, shares):
             role = AgentRole.WORKER if member.get("role", "worker") == "worker" else AgentRole.MANAGER
             skill_names = member.get("skills", [])
             skills = []
@@ -125,6 +141,10 @@ class ManagerAgent(BaseAgent):
                 except KeyError:
                     pass
 
+            tools = member.get("tools", [])
+            raw = int(total_child_budget * share / total_share)
+            budget = max(raw, _estimate_floor(tools))
+
             req = SpawnRequest(
                 parent_id=self.agent_id,
                 parent_depth=self._ctx.metadata.get("depth", 0),
@@ -132,8 +152,8 @@ class ManagerAgent(BaseAgent):
                 title=member["title"],
                 mission=member["mission"],
                 skills=skills,
-                allowed_tools=member.get("tools", []),
-                budget_tokens=budget_per_child,
+                allowed_tools=tools,
+                budget_tokens=budget,
             )
             spawn_requests.append((req, member["task"]))
 
