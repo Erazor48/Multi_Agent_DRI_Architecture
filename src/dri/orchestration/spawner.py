@@ -55,6 +55,7 @@ class Spawner:
         workspace_root: str = "",
         root_workspace_access: bool = False,
         on_progress: Callable[[str], None] | None = None,
+        budget_overrides: dict[str, int] | None = None,
     ) -> None:
         self._session_id = session_id
         self._company_name = company_name
@@ -67,6 +68,8 @@ class Spawner:
         self._root_workspace_access = root_workspace_access
         # Progress callback: called by any agent in the tree on each tool execution.
         self._on_progress: Callable[[str], None] = on_progress or (lambda _: None)
+        # Custom token budgets set via `dri company team promote` (Layer 5, Gap 3).
+        self._budget_overrides: dict[str, int] = budget_overrides or {}
 
     def report_progress(self, message: str) -> None:
         """Called by agents to surface tool-call activity to the outer status observer."""
@@ -132,6 +135,9 @@ class Spawner:
         metadata = dict(request.metadata)
         metadata["depth"] = child_depth  # inject depth so child managers know their own depth
 
+        # Apply custom token budget from Layer 5 if the founder set one via `team promote`.
+        effective_budget = self._budget_overrides.get(request.title) or request.budget_tokens
+
         config = AgentConfig(
             id=metadata.pop("agent_id", None) or str(_uuid.uuid4()),
             role=request.role,
@@ -142,7 +148,7 @@ class Spawner:
             model=model,
             skills=list(request.skills),
             allowed_tools=list(request.allowed_tools),
-            budget=BudgetAllocation(total=request.budget_tokens),
+            budget=BudgetAllocation(total=effective_budget),
             metadata=metadata,
         )
         state = AgentState(config=config, status=AgentStatus.INITIALIZING)
@@ -156,7 +162,7 @@ class Spawner:
         await self._registry.register(state)
 
         # ── Allocate budget ───────────────────────────────────
-        await self._budget_manager.allocate(config.id, request.budget_tokens)
+        await self._budget_manager.allocate(config.id, effective_budget)
 
         # ── Auto-include file tools for all workspace agents ─────
         # All workspace agents get the full file toolkit automatically.

@@ -215,6 +215,22 @@ class CompanyExecutor:
 
         workspace_root = _company_workspace(company.name)
 
+        # Load task history for CEO context (Layer 6 — Gap 2 fix)
+        from pathlib import Path as _Path
+        _history_path_chat = _Path(workspace_root) / "shared" / "_company_history.md"
+        _ceo_history_section = ""
+        if _history_path_chat.exists():
+            try:
+                _hist = _history_path_chat.read_text(encoding="utf-8").strip()
+                if _hist:
+                    _ceo_history_section = (
+                        "\n\n## Company Task History\n"
+                        "Recent tasks executed by your teams (most recent last):\n"
+                        f"{_hist[-3000:]}"
+                    )
+            except OSError:
+                pass
+
         # Compress history if it's grown too long.
         # _notify suppressed here — summarization is transparent to the user.
         provider_for_summary = create_provider()
@@ -334,7 +350,7 @@ class CompanyExecutor:
 
             "Always speak as the CEO: direct, honest, concise. "
             "A short honest failure report is better than a long fabricated success."
-        )
+        ) + _ceo_history_section
 
         llm_messages = _build_ceo_messages(history, user_message)
 
@@ -834,6 +850,14 @@ async def _run_task_force(
     # Task force lead has full workspace access — acts on behalf of the CEO
     ws_perms = [WorkspacePermission(path="", can_read=True, can_write=True, can_delete=True)]
 
+    # Load custom token budgets from Layer 5 (Gap 3 fix).
+    budget_overrides: dict[str, int] = {}
+    async with get_session() as db:
+        ca_repo = CompanyAgentRepository(db)
+        for ca in await ca_repo.list_active(company.id):
+            if ca.token_budget > 0:
+                budget_overrides[ca.title] = ca.token_budget
+
     spawner = Spawner(
         session_id=session.id,
         company_name=company.name,
@@ -844,6 +868,7 @@ async def _run_task_force(
         workspace_root=workspace_root,
         root_workspace_access=True,  # task force workers act on CEO authority
         on_progress=on_status,
+        budget_overrides=budget_overrides,
     )
 
     context = ContextBuilder.build(
