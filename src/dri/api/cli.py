@@ -237,6 +237,7 @@ def company_list() -> None:
         from dri.config.state import get_active_company_id
         from dri.storage.database import init_db, get_session
         from dri.storage.repositories import PersistentCompanyRepository
+        from dri.orchestration.company_executor import CompanyExecutor
         from rich.table import Table
 
         await init_db()
@@ -244,8 +245,18 @@ def company_list() -> None:
             repo = PersistentCompanyRepository(db)
             companies = await repo.list_active()
 
+        # Check for orphan workspaces in parallel with listing
+        orphans = await CompanyExecutor.recover_scan()
+
         if not companies:
             console.print("[dim]No persistent companies found. Use [bold]dri company create[/bold].[/dim]")
+            if orphans:
+                console.print(
+                    f"\n[yellow]⚠ {len(orphans)} orphan workspace(s) found on disk with no DB record:[/yellow]"
+                )
+                for o in orphans:
+                    console.print(f"  [dim]• {o.folder_name}[/dim] → [bold]{o.inferred_name}[/bold]")
+                console.print("[dim]Run [bold]dri company recover[/bold] to re-import them.[/dim]")
             return
 
         active_id = get_active_company_id()
@@ -274,6 +285,13 @@ def company_list() -> None:
             console.print("[dim]* = active company  |  [bold]dri company use <name-or-id>[/bold] to switch[/dim]")
         else:
             console.print("[dim]No active company set. Use [bold]dri company use <name-or-id>[/bold].[/dim]")
+
+        if orphans:
+            console.print(
+                f"\n[yellow]⚠ {len(orphans)} orphan workspace(s) not in DB:[/yellow] "
+                + ", ".join(o.folder_name for o in orphans)
+                + " — run [bold]dri company recover[/bold]"
+            )
 
     asyncio.run(_run())
 

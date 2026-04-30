@@ -150,8 +150,22 @@ class CompanyExecutor:
         if kb.exists():
             try:
                 content = kb.read_text(encoding="utf-8", errors="ignore")
-                lines = [l for l in content.splitlines() if not l.startswith("#") and l.strip()]
-                vision = " ".join(lines)[:300]
+                # Look for the Vision: line first, then fall back to first meaningful paragraph
+                for line in content.splitlines():
+                    stripped = line.strip()
+                    if stripped.lower().startswith("vision:"):
+                        vision = stripped[len("vision:"):].strip()[:300]
+                        break
+                if not vision:
+                    # Use first heading content as vision (## Company Vision section)
+                    in_vision = False
+                    for line in content.splitlines():
+                        if "vision" in line.lower() and line.startswith("#"):
+                            in_vision = True
+                            continue
+                        if in_vision and line.strip() and not line.startswith("#"):
+                            vision = line.strip()[:300]
+                            break
             except OSError:
                 pass
         if not vision:
@@ -1189,30 +1203,45 @@ def _infer_company_name(workspace_path: "Path") -> str:  # type: ignore[name-def
 
     path = _Path(workspace_path)
 
-    # Try _company_knowledge.md first (most reliable)
+    _SKIP_PREFIXES = ("company:", "nom:", "name:", "entreprise:", "vision:", "```", "---", "*", ">")
+
+    _DOC_SUFFIXES = (" knowledge base", " - knowledge base", " kb", " base de connaissances")
+
+    def _clean_line(raw: str) -> str:
+        """Strip heading markers, code fences, known label prefixes, and doc suffixes."""
+        line = raw.lstrip("#").strip()
+        if line.startswith("```"):
+            return ""
+        for prefix in ("Company:", "Nom:", "Name:", "Entreprise:", "Vision:"):
+            if line.lower().startswith(prefix.lower()):
+                line = line[len(prefix):].strip()
+                break
+        # Strip generic document-title suffixes (e.g. "Zenith Knowledge Base" → "Zenith")
+        lower = line.lower()
+        for suffix in _DOC_SUFFIXES:
+            if lower.endswith(suffix):
+                line = line[: -len(suffix)].strip()
+                break
+        return line
+
+    # Try _company_knowledge.md — scan lines until we find a non-empty, non-noise name
     kb = path / "shared" / "_company_knowledge.md"
     if kb.exists():
         try:
-            first_line = kb.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
-            # Strip markdown heading markers and common "Company: " / "Nom: " prefixes
-            name = first_line.lstrip("#").strip()
-            for prefix in ("Company:", "Nom:", "Name:", "Entreprise:"):
-                if name.lower().startswith(prefix.lower()):
-                    name = name[len(prefix):].strip()
-                    break
-            if name:
-                return name
-        except (OSError, IndexError):
+            for raw in kb.read_text(encoding="utf-8", errors="ignore").splitlines():
+                name = _clean_line(raw)
+                if name and not any(name.lower().startswith(p) for p in _SKIP_PREFIXES):
+                    return name
+        except OSError:
             pass
 
     # Try _company_history.md
     hist = path / "shared" / "_company_history.md"
     if hist.exists():
         try:
-            for line in hist.read_text(encoding="utf-8", errors="ignore").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    # First non-empty non-header line often has the company name
+            for raw in hist.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = raw.strip()
+                if line and not line.startswith("#") and not line.startswith("```"):
                     return line[:60]
         except OSError:
             pass
