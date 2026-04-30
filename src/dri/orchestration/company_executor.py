@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 import uuid
 from typing import Any
 
@@ -28,7 +29,10 @@ _SUMMARY_KEEP_VERBATIM = 14
 
 
 def _company_slug(name: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    # Decompose accented chars (é→e, ç→c, etc.) before slugifying so French names work correctly
+    normalized = unicodedata.normalize("NFD", name.lower())
+    ascii_only = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    return re.sub(r"[^a-z0-9]+", "-", ascii_only).strip("-")
 
 
 def _company_workspace(name: str) -> str:
@@ -319,13 +323,33 @@ class CompanyExecutor:
             "'bun create next-app@latest'), install deps ('bun install'), run builds "
             "('bun run build'), and process media (ffmpeg). NEVER ask the founder to run "
             "terminal commands manually when a worker with shell_exec can do it.\n"
-            "- **Next.js / Turbopack quality gate**: your workers MUST run `bun run build` "
+            "- **Next.js / shadcn / Turbopack quality gate**: your workers MUST run `bun run build` "
             "after every frontend change and fix ALL errors before reporting done. "
             "A project with a failing build is NOT done — re-spawn with stricter instructions. "
             "Build output from Turbopack includes exact error locations; workers must read and fix every one.\n"
+            "- **shadcn/ui commands** (for workers): always pass `--yes` to avoid interactive prompts:\n"
+            "  - Init: `bunx shadcn@latest init --defaults --yes` (run once inside project dir)\n"
+            "  - Add components: `bunx shadcn@latest add button card table --yes`\n"
             "- When a team delivers a runnable project, always surface the launch commands "
             "in your response using a code block — e.g. `cd <path> && bun run dev`. "
             "The founder must be able to copy-paste a single command to start the project.\n\n"
+
+            "## Large task decomposition — mandatory for websites and multi-feature apps\n"
+            "Building a website or complex application MUST be split across MULTIPLE sequential "
+            "task forces — ONE task force per phase. Never try to build an entire website in a "
+            "single spawn. The budget per worker is limited (~12 LLM rounds), so each task "
+            "force must deliver one specific, testable milestone.\n\n"
+            "Recommended phases for a web project:\n"
+            "  Phase 1 — Scaffold & architecture: `bun create next-app`, install deps, "
+            "directory structure, shadcn init, base layout, deploy config.\n"
+            "  Phase 2 — Core pages: home, main landing, navigation, global styles.\n"
+            "  Phase 3 — Feature pages: each major feature as its own task force.\n"
+            "  Phase 4 — Backend/API: server actions, API routes, data layer.\n"
+            "  Phase 5 — Polish & QA: responsive fixes, accessibility, final build check.\n\n"
+            "Each task force MUST:\n"
+            "  - Know exactly which files already exist (provided in task context from workspace snapshot).\n"
+            "  - Build on what was done in previous phases — never re-scaffold from scratch.\n"
+            "  - End with a passing `bun run build` before reporting done.\n\n"
 
             "## Workspace cleanup — strict scope\n"
             "When the founder asks to 'clean', 'fix', or 'tidy' the workspace:\n"

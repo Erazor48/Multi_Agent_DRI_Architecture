@@ -9,45 +9,45 @@ from dri.agents.manager import _estimate_floor
 # ── _estimate_floor ───────────────────────────────────────────────────────────
 
 def test_estimate_floor_shell_exec():
-    assert _estimate_floor(["shell_exec", "file_write"]) == 200_000
+    assert _estimate_floor(["shell_exec", "file_write"]) == 500_000
 
 
 def test_estimate_floor_shell_exec_only():
-    assert _estimate_floor(["shell_exec"]) == 200_000
+    assert _estimate_floor(["shell_exec"]) == 500_000
 
 
 def test_estimate_floor_web_search():
-    assert _estimate_floor(["web_search", "file_write"]) == 80_000
+    assert _estimate_floor(["web_search", "file_write"]) == 150_000
 
 
 def test_estimate_floor_web_search_only():
-    assert _estimate_floor(["web_search"]) == 80_000
+    assert _estimate_floor(["web_search"]) == 150_000
 
 
 def test_estimate_floor_code_exec():
-    assert _estimate_floor(["code_exec", "file_write"]) == 50_000
+    assert _estimate_floor(["code_exec", "file_write"]) == 120_000
 
 
 def test_estimate_floor_code_exec_only():
-    assert _estimate_floor(["code_exec"]) == 50_000
+    assert _estimate_floor(["code_exec"]) == 120_000
 
 
 def test_estimate_floor_file_only():
-    assert _estimate_floor(["file_read", "file_write", "file_list"]) == 30_000
+    assert _estimate_floor(["file_read", "file_write", "file_list"]) == 60_000
 
 
 def test_estimate_floor_empty():
-    assert _estimate_floor([]) == 30_000
+    assert _estimate_floor([]) == 60_000
 
 
 def test_estimate_floor_shell_takes_priority_over_web():
-    # shell_exec check comes first → 200k even when web_search also present
-    assert _estimate_floor(["shell_exec", "web_search"]) == 200_000
+    # shell_exec check comes first → 500k even when web_search also present
+    assert _estimate_floor(["shell_exec", "web_search"]) == 500_000
 
 
 def test_estimate_floor_web_takes_priority_over_code():
-    # web_search check comes before code_exec → 80k
-    assert _estimate_floor(["web_search", "code_exec"]) == 80_000
+    # web_search check comes before code_exec → 150k
+    assert _estimate_floor(["web_search", "code_exec"]) == 150_000
 
 
 # ── Proportional budget allocation ───────────────────────────────────────────
@@ -98,7 +98,7 @@ def test_floor_applied_when_raw_too_small():
 
     raw = int(total * 1.0 / total_share)
     budget = max(raw, _estimate_floor(tools))
-    assert budget == 200_000  # floor wins over raw=10_000
+    assert budget == 500_000  # floor wins over raw=10_000
 
 
 def test_floor_not_applied_when_raw_sufficient():

@@ -11,6 +11,7 @@ This module owns layers 2 and 4.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -19,7 +20,9 @@ from dri.core.models import AgentConfig, AgentRole, Skill, Task, WorkspacePermis
 
 def _title_slug(title: str) -> str:
     """Convert an agent title to a filesystem-safe slug (same rule as Spawner._slug)."""
-    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    normalized = unicodedata.normalize("NFD", title.lower())
+    ascii_only = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    return re.sub(r"[^a-z0-9]+", "-", ascii_only).strip("-")
 
 
 class AgentMemory:

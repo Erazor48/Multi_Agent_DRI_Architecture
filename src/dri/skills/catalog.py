@@ -127,6 +127,65 @@ class SkillCatalog:
             ),
             required_tools=["file_read", "file_write", "file_list"],
         ),
+        # ── Web Development ──────────────────────────────────
+        "nextjs_development": Skill(
+            name="Next.js Development",
+            description="Build and maintain Next.js applications with TypeScript, Tailwind CSS, and shadcn/ui.",
+            instructions=(
+                "## Scaffold a new project\n"
+                "```\n"
+                "bun create next-app@latest <app-name> --typescript --tailwind --eslint --app --src-dir --import-alias '@/*' --yes\n"
+                "```\n\n"
+                "## Initialize shadcn/ui (run once, inside project dir)\n"
+                "```\n"
+                "bunx shadcn@latest init --defaults --yes\n"
+                "```\n\n"
+                "## Add shadcn components (non-interactive)\n"
+                "```\n"
+                "bunx shadcn@latest add button card input table dialog --yes\n"
+                "```\n\n"
+                "## Install deps, build, dev\n"
+                "```\n"
+                "bun install          # install / update packages\n"
+                "bun run build        # production build — MUST pass with zero errors\n"
+                "bun run dev          # start dev server (use only to verify, don't block)\n"
+                "```\n\n"
+                "## Rules\n"
+                "- Always use `cwd` pointing to the project folder for all commands.\n"
+                "- Run `bun run build` after EVERY change and fix ALL TypeScript/Tailwind errors.\n"
+                "- Never fabricate component names — only use components that exist in the project.\n"
+                "- Use `file_list` to verify generated files before reporting done.\n"
+                "- For interactive CLI tools, always pass `--yes` or `--defaults` to avoid hanging.\n"
+                "- Tailwind v4: use CSS variables in `globals.css`, NOT `tailwind.config.js`.\n"
+                "- shadcn/ui components live in `src/components/ui/` — import from `@/components/ui/<name>`.\n"
+            ),
+            required_tools=["shell_exec", "file_write", "file_read", "file_list"],
+        ),
+        "frontend_development": Skill(
+            name="Frontend Development",
+            description="Build web UIs with React, TypeScript, CSS/Tailwind — within an existing project.",
+            instructions=(
+                "## Working within an existing Next.js project\n"
+                "- ALWAYS call `file_list` on the project root first to understand the existing structure.\n"
+                "- Read `package.json` to know the exact installed versions before writing any code.\n"
+                "- Read `src/app/globals.css` and `src/app/layout.tsx` before modifying styles.\n"
+                "- Import existing shadcn components from `@/components/ui/<name>` — don't recreate them.\n\n"
+                "## Adding new shadcn components\n"
+                "```\n"
+                "bunx shadcn@latest add <component-name> --yes\n"
+                "```\n"
+                "Available components: accordion, alert, avatar, badge, button, calendar, card, checkbox, "
+                "command, dialog, dropdown-menu, form, input, label, navigation-menu, popover, "
+                "progress, radio-group, select, separator, sheet, skeleton, slider, switch, table, "
+                "tabs, textarea, toast, toggle, tooltip.\n\n"
+                "## Quality rules\n"
+                "- Run `bun run build` after EVERY change — fix all errors before reporting done.\n"
+                "- No `any` types in TypeScript — use proper interfaces.\n"
+                "- No inline styles — use Tailwind utility classes.\n"
+                "- Verify every file you write actually exists with `file_list` before reporting.\n"
+            ),
+            required_tools=["shell_exec", "file_write", "file_read", "file_list"],
+        ),
         # ── Finance ──────────────────────────────────────────
         "financial_modeling": Skill(
             name="Financial Modeling",

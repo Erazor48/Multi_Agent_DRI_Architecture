@@ -14,6 +14,7 @@ Flow:
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Callable
 
 from dri.config.settings import settings
@@ -82,7 +83,10 @@ class Spawner:
 
     @staticmethod
     def _slug(name: str) -> str:
-        return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        # Decompose accented chars (é→e, ç→c, etc.) before slugifying
+        normalized = unicodedata.normalize("NFD", name.lower())
+        ascii_only = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9]+", "-", ascii_only).strip("-")
 
     def _workspace_permissions(
         self, role: AgentRole, title: str, parent_title: str

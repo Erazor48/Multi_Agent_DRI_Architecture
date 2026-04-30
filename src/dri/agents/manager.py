@@ -62,9 +62,11 @@ _ORG_PLAN_TOOL = {
                             "description": (
                                 "Tool names to grant: web_search, code_exec, shell_exec, "
                                 "file_read, file_write, file_list, file_delete, propose_external_action. "
-                                "Grant shell_exec to workers who need to run system commands "
-                                "(e.g. scaffold a Next.js app with bun, process media with ffmpeg, "
-                                "run builds, install dependencies)."
+                                "For Next.js / shadcn / frontend workers: grant shell_exec + "
+                                "assign skill 'nextjs_development' or 'frontend_development'. "
+                                "shell_exec allows: bun create, bun install, bun run build, "
+                                "bunx shadcn@latest init --defaults --yes, "
+                                "bunx shadcn@latest add <components> --yes."
                             ),
                         },
                         "budget_share": {
@@ -86,14 +88,20 @@ _ORG_PLAN_TOOL = {
 
 
 def _estimate_floor(tools: list[str]) -> int:
-    """Minimum token budget per worker based on its assigned tools."""
+    """Minimum token budget per worker based on its assigned tools.
+
+    Floors account for: system prompt overhead (~25k tokens) + tool call overhead
+    + the expected number of LLM rounds for that task type.
+    With Gemini Flash, each round costs ~30-40k tokens (system prompt + history + output).
+    shell_exec tasks need 12+ rounds (scaffold → install → code → build → fix errors).
+    """
     if "shell_exec" in tools:
-        return 200_000   # scaffolding, builds, ffmpeg
+        return 500_000   # scaffolding, builds, ffmpeg — needs ~12-15 LLM rounds
     if "web_search" in tools:
-        return 80_000    # research + synthesis
+        return 150_000   # research + synthesis — needs ~5-8 rounds
     if "code_exec" in tools:
-        return 50_000    # Python scripts
-    return 30_000        # file ops + writing
+        return 120_000   # Python scripts — needs ~4-6 rounds
+    return 60_000        # file ops + writing — needs ~2-4 rounds
 
 
 class ManagerAgent(BaseAgent):
@@ -130,9 +138,21 @@ class ManagerAgent(BaseAgent):
         # Shares are normalized so the total always sums to total_child_budget.
         shares = [float(m.get("budget_share", 1.0)) for m in team_members]
         total_share = sum(shares) or len(team_members)
+        n = len(team_members)
+
+        # Compute per-worker budgets: proportional share boosted up to the floor.
+        raw_budgets = [int(total_child_budget * s / total_share) for s in shares]
+        tools_list = [m.get("tools", []) for m in team_members]
+        floored = [max(r, _estimate_floor(t)) for r, t in zip(raw_budgets, tools_list)]
+
+        # If applying floors causes total allocation to exceed available budget,
+        # fall back to equal share of available budget (guaranteed at least the smallest floor).
+        if sum(floored) > parent_remaining:
+            equal_share = max(total_child_budget // n, _estimate_floor([]) )
+            floored = [equal_share] * n
 
         spawn_requests = []
-        for member, share in zip(team_members, shares):
+        for member, budget in zip(team_members, floored):
             role = AgentRole.WORKER if member.get("role", "worker") == "worker" else AgentRole.MANAGER
             skill_names = member.get("skills", [])
             skills = []
@@ -143,8 +163,6 @@ class ManagerAgent(BaseAgent):
                     pass
 
             tools = member.get("tools", [])
-            raw = int(total_child_budget * share / total_share)
-            budget = max(raw, _estimate_floor(tools))
 
             req = SpawnRequest(
                 parent_id=self.agent_id,
