@@ -7,6 +7,7 @@ CompanyExecutor — manages persistent company lifecycle.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import uuid
@@ -526,8 +527,10 @@ async def _ceo_loop(
 
     # Inject the real workspace state into the current user turn before the first LLM call.
     # This ensures the CEO always starts from ground truth — never from stale memory.
+    _last_snapshot_hash: str = ""
     if msgs and msgs[-1].get("role") == "user":
         snapshot = _workspace_snapshot(workspace_root)
+        _last_snapshot_hash = hashlib.md5(snapshot.encode()).hexdigest()
         original = msgs[-1]["content"]
         msgs[-1] = {
             **msgs[-1],
@@ -559,9 +562,15 @@ async def _ceo_loop(
                     workspace_root=workspace_root,
                     on_status=on_status,
                 )
-                # Append a verified workspace snapshot so the CEO can only cite files
-                # that actually exist — never trust team reports alone.
-                result += "\n\n---\n" + _workspace_snapshot(workspace_root)
+                # Append workspace snapshot only when its contents changed since last spawn —
+                # avoids repeating 2000+ token snapshots for unchanged workspaces.
+                new_snapshot = _workspace_snapshot(workspace_root)
+                new_hash = hashlib.md5(new_snapshot.encode()).hexdigest()
+                if new_hash != _last_snapshot_hash:
+                    result += "\n\n---\n" + new_snapshot
+                    _last_snapshot_hash = new_hash
+                else:
+                    result += "\n\n*(workspace unchanged since last spawn)*"
                 tool_results.append({
                     "type": "tool_result",
                     "tool_call_id": tc.id,
@@ -677,6 +686,46 @@ def _append_company_history(
         pass  # History log is non-critical
 
 
+async def _update_company_kb(
+    *,
+    workspace_root: str,
+    company: PersistentCompany,
+    task_description: str,
+    task_result: str,
+) -> None:
+    """
+    Rewrite shared/_company_knowledge.md to reflect decisions and learnings from the
+    latest task. Called automatically after every successful task force (Layer 3).
+    """
+    from pathlib import Path as _Path
+    kb_path = _Path(workspace_root) / "shared" / "_company_knowledge.md"
+    existing = kb_path.read_text(encoding="utf-8").strip() if kb_path.exists() else ""
+
+    provider = create_provider()
+    response = await provider.call(
+        system="You maintain a company knowledge base. Be concise and factual.",
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Company: {company.name}\nVision: {company.vision}\n\n"
+                + (f"## Current KB\n{existing[:3000]}\n\n" if existing else "")
+                + f"## Task just completed\n{task_description[:200]}\n\n"
+                + f"## Result summary\n{task_result[:1000]}\n\n"
+                "Update the knowledge base to reflect what was learned or decided.\n"
+                "Keep these sections (add if missing): "
+                "## Strategic Decisions / ## Brand & Voice / ## Technical Stack / "
+                "## Completed Milestones / ## Lessons Learned\n"
+                "Max 200 lines total. Write the full updated file."
+            ),
+        }],
+        tools=None,
+        model=settings.default_model,
+        max_tokens=4096,
+    )
+    if response.text:
+        kb_path.write_text(response.text, encoding="utf-8")
+
+
 async def _run_task_force(
     *,
     company: PersistentCompany,
@@ -702,6 +751,7 @@ async def _run_task_force(
         BudgetAllocation,
         Session,
         Task,
+        TaskStatus,
         WorkspacePermission,
     )
     from dri.core.registry import AgentRegistry
@@ -730,26 +780,31 @@ async def _run_task_force(
     ]
     official_folders_str = "\n".join(f"  - {f}" for f in official_folders)
 
-    # Load company knowledge base + task history — both injected into the task force lead.
+    # Load company knowledge base + task history.
+    # _company_kb / _company_history: formatted strings (with section headings) for the TFL mission.
+    # _company_kb_raw / _company_history_raw: raw content passed to Spawner → all child agents.
     from pathlib import Path as _Path
     _kb_path = _Path(workspace_root) / "shared" / "_company_knowledge.md"
+    _company_kb_raw = ""
     _company_kb = ""
     if _kb_path.exists():
         try:
             _kb_content = _kb_path.read_text(encoding="utf-8").strip()
             if _kb_content:
-                _company_kb = f"\n\n## Company Knowledge Base\n{_kb_content[:3000]}"
+                _company_kb_raw = _kb_content[:3000]
+                _company_kb = f"\n\n## Company Knowledge Base\n{_company_kb_raw}"
         except OSError:
             pass
 
     _history_path = _Path(workspace_root) / "shared" / "_company_history.md"
+    _company_history_raw = ""
     _company_history = ""
     if _history_path.exists():
         try:
             _history_content = _history_path.read_text(encoding="utf-8").strip()
             if _history_content:
-                # Keep only the last 3000 chars (most recent entries)
-                _company_history = f"\n\n## Company Task History\n{_history_content[-3000:]}"
+                _company_history_raw = _history_content[-3000:]
+                _company_history = f"\n\n## Company Task History\n{_company_history_raw}"
         except OSError:
             pass
 
@@ -869,6 +924,8 @@ async def _run_task_force(
         root_workspace_access=True,  # task force workers act on CEO authority
         on_progress=on_status,
         budget_overrides=budget_overrides,
+        company_kb=_company_kb_raw,
+        company_history_snippet=_company_history_raw,
     )
 
     context = ContextBuilder.build(
@@ -940,6 +997,18 @@ async def _run_task_force(
         report=report,
         tokens_total=tokens_total,
     )
+
+    # Layer 3: Auto-update company knowledge base after every successful task.
+    if report.status == TaskStatus.DONE:
+        try:
+            await _update_company_kb(
+                workspace_root=workspace_root,
+                company=company,
+                task_description=task_description,
+                task_result=report.result or "",
+            )
+        except Exception:
+            pass  # non-critical
 
     async with get_session() as db:
         session_repo = SessionRepository(db)

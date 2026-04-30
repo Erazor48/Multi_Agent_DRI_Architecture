@@ -56,6 +56,8 @@ class Spawner:
         root_workspace_access: bool = False,
         on_progress: Callable[[str], None] | None = None,
         budget_overrides: dict[str, int] | None = None,
+        company_kb: str = "",
+        company_history_snippet: str = "",
     ) -> None:
         self._session_id = session_id
         self._company_name = company_name
@@ -70,6 +72,9 @@ class Spawner:
         self._on_progress: Callable[[str], None] = on_progress or (lambda _: None)
         # Custom token budgets set via `dri company team promote` (Layer 5, Gap 3).
         self._budget_overrides: dict[str, int] = budget_overrides or {}
+        # Company-level context injected into every spawned agent's system prompt.
+        self._company_kb: str = company_kb
+        self._company_history_snippet: str = company_history_snippet
 
     def report_progress(self, message: str) -> None:
         """Called by agents to surface tool-call activity to the outer status observer."""
@@ -194,6 +199,8 @@ class Spawner:
             workspace_root=self._workspace_root,
             workspace_permissions=ws_perms,
             memory_dept=memory_dept,
+            company_kb=self._company_kb,
+            company_history_snippet=self._company_history_snippet,
         )
 
         # ── Instantiate correct class ─────────────────────────

@@ -135,6 +135,8 @@ class ContextPacket:
     workspace_permissions: list[WorkspacePermission] = field(default_factory=list)
     memory_dept: str = ""                                            # dept slug for Layer 2 memory (set by Spawner)
     agent_memory: str = ""                                           # injected at task start from _knowledge/
+    company_kb: str = ""                                             # Layer 3: shared/_company_knowledge.md (set by Spawner)
+    company_history_snippet: str = ""                                # Layer 6: last 1500 chars of _company_history.md
 
     def to_system_prompt(self) -> str:
         """
@@ -148,6 +150,14 @@ class ContextPacket:
         lines.append(f"You report directly to **{self.parent_title}**.")
         lines.append("\n## Your Mission\n")
         lines.append(self.mission)
+
+        if self.company_kb:
+            lines.append("\n## Company Knowledge Base\n")
+            lines.append(self.company_kb)
+
+        if self.company_history_snippet:
+            lines.append("\n## Company Task History (recent)\n")
+            lines.append(self.company_history_snippet)
 
         if self.skills:
             lines.append("\n## Your Skills\n")
@@ -270,6 +280,8 @@ class ContextBuilder:
         workspace_root: str = "",
         workspace_permissions: list[WorkspacePermission] | None = None,
         memory_dept: str = "",
+        company_kb: str = "",
+        company_history_snippet: str = "",
     ) -> ContextPacket:
         return ContextPacket(
             agent_id=child_config.id,
@@ -289,6 +301,8 @@ class ContextBuilder:
             workspace_root=workspace_root,
             workspace_permissions=workspace_permissions or [],
             memory_dept=memory_dept,
+            company_kb=company_kb,
+            company_history_snippet=company_history_snippet,
         )
 
     @staticmethod
