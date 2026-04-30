@@ -2,7 +2,7 @@
 
 > **For any new agent taking over this project:** This file is your single source of truth.
 > Read it **entirely** before touching any code. It reflects the exact state of the codebase
-> as of 2026-04-27. Never start from zero — everything is here.
+> as of 2026-05-01. Never start from zero — everything is here.
 
 ---
 
@@ -482,21 +482,21 @@ Layer 6 (ACTIVE): Company Task History
 - [x] src/dri/tools/code_exec.py
 - [x] src/dri/tools/file_ops.py — file_read / file_write / file_list / file_delete + RBAC. File handle uses context manager. Delete counter is per-agent-per-folder (keyed by `_agent_id`).
 - [x] src/dri/tools/external_actions.py — propose_external_action + enum validation + content check. action_id is now UUID string (no race condition).
-- [x] src/dri/tools/shell_exec.py — shell_exec tool: allowlisted executables (bun/uv/ffmpeg/git/node/…), CWD sandboxed to workspace, no shell=True, 300s max timeout, 20k char output cap.
+- [x] src/dri/tools/shell_exec.py — shell_exec tool: allowlisted executables (bun/uv/ffmpeg/git/node/…), CWD sandboxed to workspace, no shell=True, 300s max timeout, 20k char output cap. **Git destructive subcommand guard**: `git clean`, `git rm`, `git restore`, `git reset --hard/--mixed`, `git checkout -- <file>` are blocked at the tool level — agents must use `propose_external_action` with `bulk_file_delete` for any workspace-destroying operation.
 - [x] src/dri/agents/base.py — _cleanup_wip / _inventory_dept_files / _fail_report. Persistent memory: _load_agent_memory() + _knowledge_path_str(). Memory loaded before each task into ContextPacket.agent_memory.
 - [x] src/dri/agents/root.py — fixed __import__ → proper top-level imports
 - [x] src/dri/agents/manager.py — synthesis uses agentic loop. Writes targeted feedback to each worker's _knowledge/feedback.md after synthesis.
 - [x] src/dri/agents/worker.py — knowledge update instruction: writes expertise.md at end of each task.
 - [x] src/dri/orchestration/spawner.py — RBAC permissions, auto-include file tools
 - [x] src/dri/orchestration/executor.py
-- [x] src/dri/orchestration/company_executor.py — Layer 3 (company KB), Layer 4 (CEO summarization), Layer 5 (agent tracking via _run_task_force), Layer 6 (history log + injection). _append_company_history() writes shared/_company_history.md.
+- [x] src/dri/orchestration/company_executor.py — Layer 3 (company KB), Layer 4 (CEO summarization), Layer 5 (agent tracking via _run_task_force), Layer 6 (history log + injection). _append_company_history() writes shared/_company_history.md. **CEO conversation safety** (see section below).
 - [x] src/dri/connectors/base.py — BaseConnector ABC + ConnectorResult
 - [x] src/dri/connectors/registry.py — ConnectorRegistry (dedup on register)
 - [x] src/dri/connectors/email_smtp.py — SMTP email (Gmail, Outlook, any SMTP)
 - [x] src/dri/connectors/webhook.py — HTTP POST (Slack, Discord, Make.com, Zapier, n8n, custom)
 - [x] src/dri/connectors/__init__.py
 - [x] src/dri/api/cli.py — all commands + connector dispatch on approval + Windows UTF-8 fix. `dri company team list/show/note/remove/promote` (Layer 5 CLI).
-- [x] tests/unit/ — 101/101 passing (14 new tests for CompanyAgentRepository)
+- [x] tests/unit/ — 122/122 passing
 
 ### Connectors (all completed 2026-04-27)
 - [x] Slack Bot Token — `src/dri/connectors/slack_bot.py`
@@ -517,6 +517,34 @@ Layer 6 (ACTIVE): Company Task History
 - [x] **Gap 3 fix** — `Spawner` accepts `budget_overrides: dict[str, int]`. `_run_task_force()` loads
   active `CompanyAgent` records and passes any `token_budget > 0` as overrides. Custom budgets set via
   `dri company team promote` are now applied at spawn time.
+
+### UX & safety fixes (completed 2026-05-01)
+
+- [x] **Git destructive command guard** — `shell_exec.py` now blocks `git clean`, `git rm`,
+  `git restore`, `git reset --hard/--mixed`, `git checkout -- <file>` at the tool level.
+  Any workspace-destroying operation must go through `propose_external_action` with
+  `action_type='bulk_file_delete'` → requires founder approval.
+
+- [x] **"Rogue artifact" instruction removed** — The task force lead's mission no longer tells
+  agents to auto-delete unrecognized folders. Unknown folders are now mentioned in the synthesis
+  report only, and any folder cleanup requires founder approval.
+
+- [x] **CEO conversation-first behavior** — `_build_ceo_messages()` injects `[NEW CONVERSATION]`
+  on the first ever message. The CEO system prompt now has three execution tiers:
+  1. `[NEW CONVERSATION]` → greet + invite task, **do NOT spawn**.
+  2. Major construction task (app, multi-dept) → send ONE confirmation message, spawn only after founder approval.
+  3. Simple task (report, content, fix) → spawn immediately as before.
+
+- [x] **CEO "explain before restart" rule** — New section in CEO system prompt: if the founder
+  asks what happened / why something is missing, the CEO MUST explain from workspace + history
+  before proposing next steps. Never silently restart.
+
+- [x] **CEO live progress** — `on_status("CEO thinking... (round N)")` called every loop
+  iteration, so the Live panel shows the CEO is active even between spawns.
+
+- [x] **Spawn deduplication** — `_ceo_loop` tracks `_spawned_task_keys` (set of first-120-char
+  normalized task descriptions). A second `spawn_team` call for the same task is blocked with
+  a `[DUPLICATE SPAWN BLOCKED]` message instead of running a second team.
 
 ### Other remaining improvements
 - **Budget borrowing** — unused sibling tokens pooled for reuse.
@@ -545,4 +573,31 @@ Layer 6 (ACTIVE): Company Task History
 - **Approval dispatch**: after founder approves, `cli.py` calls `ConnectorRegistry.get_for(action_type, action)` → executes.
 - **Windows UTF-8**: `cli.py` sets `sys.stdout` to UTF-8 + `Console(legacy_windows=False)`.
 - **Provider**: Gemini via Vertex AI. Workers = gemini-2.5-flash. CEO = gemini-2.5-pro.
-- **Tests**: `uv run pytest tests/unit/ -q` must stay at 106/106 before any commit.
+- **Tests**: `uv run pytest tests/unit/ -q` must stay at **122/122** before any commit.
+
+### Real-world test to run (requested by founder, 2026-05-01)
+
+Run this end-to-end test from the user's perspective and document every friction point:
+
+```bash
+uv run dri company create --pitch "l'objectif de l'entreprise est de gérer un parc immobilier de 6 appartements au sein d'un immeuble. j'aimerai un site web public et privé pour prendre en charge la gestion de l'ensemble de ces bien. A savoir : la suivi des recettes et des dépenses ainsi que les recommandations d'optimisation financieres et fiscales."
+uv run dri company chat
+```
+
+**What to evaluate from the user's perspective:**
+1. Does the CEO greet the founder first and NOT immediately spawn a team? (Fix 3 validation)
+2. When you ask it a question, does it answer instead of relaunching? (Fix 4 validation)
+3. Is the Live progress panel showing meaningful status? (Fix 5 validation)
+4. When you trigger a build task, does the CEO ask for confirmation before spawning? (Fix 3b)
+5. Are `git clean` equivalents blocked if any agent tries them? (Fix 1 validation)
+6. Is the workspace clean after task completion — no phantom files? (Fix 2 validation)
+7. Report all UX friction: confusing messages, missing feedback, unclear states, unexpected behaviors.
+
+**Known issues still open** (fix if time allows):
+- Agents can still run `git push --force` (not blocked, needed for future GitHub connector)
+- No structured progress bar (which agent % done) — only text status
+- No `/status` CLI command to check what's running mid-task
+
+**Deletion safety reminder**: agents can delete individual files with `file_delete`. For bulk
+or folder-level deletion, they must use `propose_external_action(action_type='bulk_file_delete')`
+which queues a founder-approval request visible via `dri company approvals list`.

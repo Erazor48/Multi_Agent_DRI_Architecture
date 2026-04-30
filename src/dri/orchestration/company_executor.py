@@ -285,11 +285,20 @@ class CompanyExecutor:
             "workspace snapshot — not on what a team claimed.\n\n"
 
             "## Execution rules — mandatory\n"
-            "- For tasks requiring real work (research, content, code, analysis, file edits): "
-            "call `spawn_team` NOW in this response — do NOT describe launching a team "
-            "without actually calling the tool. 'Je mandate une équipe' without a spawn_team "
-            "call is fabrication and is strictly forbidden.\n"
+            "- **New conversation rule**: if the founder's message is marked [NEW CONVERSATION], "
+            "ALWAYS respond conversationally first: greet the founder, summarize the company "
+            "structure in 2-3 sentences, and invite them to share their first task or ask questions. "
+            "Do NOT call spawn_team on a [NEW CONVERSATION] message — wait for the founder to "
+            "give you an explicit task before executing anything.\n"
+            "- **Major task rule**: for large construction tasks (building an app, redesigning a "
+            "full department, multi-team work), send ONE brief confirmation message first: "
+            "outline your plan in 3-4 bullets and ask the founder to confirm. "
+            "Only call spawn_team after the founder says 'go', 'proceed', 'yes', 'do it', or similar.\n"
+            "- **Simple task rule**: for well-scoped tasks (a report, a content piece, a small fix), "
+            "call spawn_team immediately — no confirmation needed.\n"
             "- For discussion and questions: respond directly without spawn_team.\n"
+            "- Do NOT describe launching a team without actually calling the tool. "
+            "'Je mandate une équipe' without a spawn_team call is fabrication and is strictly forbidden.\n"
             "- **After every spawn_team**: use `file_read` on each key deliverable to verify "
             "its content is real and complete — not empty, not placeholder, not fabricated. "
             "A file that exists but contains fake or template data counts as FAILED.\n"
@@ -327,6 +336,16 @@ class CompanyExecutor:
             "- Deleting a folder with more than 3 files is blocked by the system — you "
             "must use `propose_external_action` with action_type='bulk_file_delete', "
             "listing every file with its rationale, and wait for founder approval.\n\n"
+
+            "## When the founder asks what happened\n"
+            "If the founder asks 'what happened', 'que s'est-il passé', 'why is X missing', "
+            "'what did you do', 'explain', or any similar retrospective question:\n"
+            "1. FIRST summarize what you observe in the workspace snapshot and what you know "
+            "from the conversation history — tell the founder what was done, what succeeded, "
+            "what failed, and what state the workspace is in.\n"
+            "2. Only THEN propose next steps — and ask for confirmation before spawning.\n"
+            "NEVER silently restart a phase or spawn a new team in response to a 'what happened' "
+            "question — the founder needs an explanation, not more silent execution.\n\n"
 
             "## Integrity rules — no exceptions\n"
             "- NEVER invent data, file paths, or results. If you did not verify it, "
@@ -497,7 +516,12 @@ def _build_ceo_messages(
             )
         llm_messages.append({"role": role, "content": content})
 
-    llm_messages.append({"role": "user", "content": current_user_message})
+    # Mark the first ever message so the CEO greets first instead of spawning immediately.
+    final_content = current_user_message
+    if not recent and not summaries:
+        final_content = f"[NEW CONVERSATION — greet the founder first, do NOT spawn yet]\n\n{current_user_message}"
+
+    llm_messages.append({"role": "user", "content": final_content})
     return llm_messages
 
 
@@ -524,6 +548,8 @@ async def _ceo_loop(
     all_ceo_tools = [_SPAWN_TEAM_TOOL] + _CEO_READ_TOOLS
     # CEO has read-only access to the entire workspace
     ceo_permissions = [{"path": "", "can_read": True, "can_write": False, "can_delete": False}]
+    # Deduplication: track task descriptions that already have an active spawn this loop.
+    _spawned_task_keys: set[str] = set()
 
     # Inject the real workspace state into the current user turn before the first LLM call.
     # This ensures the CEO always starts from ground truth — never from stale memory.
@@ -537,7 +563,8 @@ async def _ceo_loop(
             "content": f"**Current workspace (verified on disk):**\n{snapshot}\n\n---\n\n{original}",
         }
 
-    for _ in range(20):  # allow file inspection rounds before and between spawns
+    for round_idx in range(20):  # allow file inspection rounds before and between spawns
+        on_status(f"CEO thinking... (round {round_idx + 1})")
         response = await provider.call(
             system=system,
             messages=msgs,
@@ -555,6 +582,22 @@ async def _ceo_loop(
         for tc in response.tool_calls:
             if tc.name == "spawn_team":
                 task_desc = tc.input.get("task_description", "")
+                # Deduplication guard: prevent the CEO from spawning the same task twice
+                # in the same loop (e.g. when it misremembers a prior spawn).
+                task_key = task_desc[:120].lower().strip()
+                if task_key in _spawned_task_keys:
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_call_id": tc.id,
+                        "tool_name": tc.name,
+                        "content": (
+                            "[DUPLICATE SPAWN BLOCKED] A team was already spawned for this task "
+                            "in this conversation turn. Do not spawn again — wait for the previous "
+                            "result or ask the founder what to do next."
+                        ),
+                    })
+                    continue
+                _spawned_task_keys.add(task_key)
                 on_status(f"Spawning team: {task_desc[:60]}...")
                 result = await _run_task_force(
                     company=company,
@@ -822,11 +865,14 @@ async def _run_task_force(
             + _company_kb
             + _company_history
             + f"\n\nOfficial workspace folders:\n{official_folders_str}\n"
-            "Any folder NOT in this list is a rogue artifact and must be deleted during cleanup.\n\n"
+            "If you find a folder NOT in this list, mention it in your synthesis report — "
+            "do NOT delete it autonomously. Any cleanup of unrecognized folders requires "
+            "founder approval via `propose_external_action` with action_type='bulk_file_delete', "
+            "listing every file with its rationale.\n\n"
             f"Your task: {task_description}\n\n"
             "Before designing your team:\n"
-            "1. Use `file_list` on the workspace root to check what exists — identify rogue folders "
-            "and build on existing work, do not redo it.\n"
+            "1. Use `file_list` on the workspace root to check what exists — identify existing work "
+            "and build on it, do not redo it.\n"
             "2. If the task involves a Next.js project, read its AGENTS.md first with `file_read`. "
             "For example, the Momentum Next.js guide is at "
             "'marketing-produit-et-aide-la-vente/momentum-nextjs/AGENTS.md'. "

@@ -35,6 +35,22 @@ _ALLOWED_EXECUTABLES: frozenset[str] = frozenset({
     "magick", "convert",
 })
 
+# Git subcommands that destroy working-tree content unconditionally.
+# These are blocked outright — no approval path.
+_GIT_BLOCKED_SUBCOMMANDS: frozenset[str] = frozenset({
+    "clean",    # deletes all untracked/ignored files — irreversible
+    "rm",       # removes files from the index and disk
+    "restore",  # discards uncommitted working-tree changes
+})
+
+# For `git reset`, only --hard / --mixed are destructive (touch working tree / index).
+# --soft only moves HEAD and is safe.
+_GIT_RESET_DESTRUCTIVE_FLAGS: frozenset[str] = frozenset({"--hard", "--mixed"})
+
+# `git checkout -- <path>` discards uncommitted changes; detect the separator.
+# `git checkout <branch>` is safe — only blocked when `--` is present (file-mode).
+_GIT_CHECKOUT_DISCARD_FLAG = "--"
+
 
 def _get_workspace() -> Path:
     from dri.config.settings import get_settings
@@ -121,6 +137,29 @@ class ShellExecTool(BaseTool):
                 f"Executable '{args[0]}' is not in the allowlist. "
                 f"Allowed: {', '.join(sorted(_ALLOWED_EXECUTABLES))}."
             )
+
+        # Git destructive subcommand guard — these operations destroy workspace content
+        # and require explicit founder approval via propose_external_action.
+        if exe_name == "git" and len(args) >= 2:
+            subcmd = args[1].lower()
+            if subcmd in _GIT_BLOCKED_SUBCOMMANDS:
+                return ToolOutput.fail(
+                    f"'git {subcmd}' is blocked — this command can permanently delete workspace files. "
+                    "If cleanup is truly needed, use propose_external_action with "
+                    "action_type='bulk_file_delete' to request founder approval, listing every file "
+                    "with its rationale."
+                )
+            if subcmd == "reset" and any(f in args[2:] for f in _GIT_RESET_DESTRUCTIVE_FLAGS):
+                destructive_flag = next(f for f in args[2:] if f in _GIT_RESET_DESTRUCTIVE_FLAGS)
+                return ToolOutput.fail(
+                    f"'git reset {destructive_flag}' is blocked — this discards uncommitted work. "
+                    "Use 'git reset --soft' if you only need to move HEAD without touching files."
+                )
+            if subcmd == "checkout" and _GIT_CHECKOUT_DISCARD_FLAG in args[2:]:
+                return ToolOutput.fail(
+                    "'git checkout --' is blocked — this discards uncommitted file changes. "
+                    "If you need to revert specific files, use propose_external_action for approval."
+                )
 
         # Resolve cwd — must stay inside workspace
         cwd = _resolve_cwd(cwd_rel, workspace_root)
