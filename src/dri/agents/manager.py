@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from dri.agents.base import BaseAgent
 from dri.config.settings import settings
-from dri.core.models import AgentRole, AgentStatus, SpawnRequest, Task
+from dri.core.models import AgentRole, AgentStatus, SpawnRequest, Task, TaskStatus
 from dri.skills.catalog import SkillCatalog
 
 if TYPE_CHECKING:
@@ -161,30 +162,45 @@ class ManagerAgent(BaseAgent):
         await self._registry.update_status(self.agent_id, AgentStatus.WAITING)
 
         async def _spawn_and_run(req: SpawnRequest, task_description: str) -> str:
-            child_task = Task(
-                description=task_description,
-                context=f"Parent context:\n{task.context}" if task.context else "",
-                assigned_to="",      # will be set after spawn
-                delegated_by=self.agent_id,
-            )
-            child_agent = await self._spawner.spawn(
-                req,
-                parent_title=self._ctx.title,
-                constraints=[
-                    f"Report directly to {self._ctx.title}.",
-                    "Do not scope beyond your assigned task.",
-                ],
-            )
-            child_task.assigned_to = child_agent.agent_id
-
-            # Persist the child task
             from dri.storage.database import get_session
             from dri.storage.repositories import TaskRepository
-            async with get_session() as db:
-                task_repo = TaskRepository(db)
-                await task_repo.create(self._session_id, child_task)
 
-            report = await child_agent.run(child_task)
+            async def _run_once(r: SpawnRequest):  # -> ReportMessage
+                child_task = Task(
+                    description=task_description,
+                    context=f"Parent context:\n{task.context}" if task.context else "",
+                    assigned_to="",
+                    delegated_by=self.agent_id,
+                )
+                child_agent = await self._spawner.spawn(
+                    r,
+                    parent_title=self._ctx.title,
+                    constraints=[
+                        f"Report directly to {self._ctx.title}.",
+                        "Do not scope beyond your assigned task.",
+                    ],
+                )
+                child_task.assigned_to = child_agent.agent_id
+                async with get_session() as db:
+                    task_repo = TaskRepository(db)
+                    await task_repo.create(self._session_id, child_task)
+                return await child_agent.run(child_task)
+
+            report = await _run_once(req)
+
+            # One automatic retry when a worker fails due to budget exhaustion.
+            # Do NOT retry timeout failures — infinite loops possible.
+            if (
+                report.status == TaskStatus.FAILED
+                and report.issues
+                and "budget" in report.issues[0].lower()
+            ):
+                parent_alloc = self._spawner._budget_manager.get_allocation(self.agent_id)
+                parent_remaining = parent_alloc.remaining if parent_alloc else 0
+                retry_budget = min(req.budget_tokens * 2, parent_remaining // 2)
+                if retry_budget > req.budget_tokens:
+                    report = await _run_once(req.model_copy(update={"budget_tokens": retry_budget}))
+
             return f"**{req.title}**: {report.result}" if report.result else f"**{req.title}**: [no result]"
 
         results = await asyncio.gather(
@@ -317,4 +333,36 @@ class ManagerAgent(BaseAgent):
             }
         ]
         result = await self._agentic_loop(messages, task.id)
+
+        # Fallback guarantee: ensure each worker has a feedback.md even if the LLM forgot.
+        if worker_titles:
+            for title in worker_titles:
+                kpath = self._knowledge_path_str(title)
+                if not kpath or not self._ctx.workspace_root:
+                    continue
+                feedback_file = Path(self._ctx.workspace_root) / kpath / "feedback.md"
+                if feedback_file.exists():
+                    continue
+                try:
+                    fb_resp = await self._call_llm(
+                        messages=[{
+                            "role": "user",
+                            "content": (
+                                f"You just reviewed work by {title}.\n"
+                                f"Task: {task.description[:200]}\n\n"
+                                "Write brief feedback (max 20 lines):\n"
+                                "- What they did well\n- How to improve\n"
+                                "- Domain rules to remember\n"
+                                "Write only the file content."
+                            ),
+                        }],
+                        estimated_tokens=1500,
+                    )
+                    feedback_file.parent.mkdir(parents=True, exist_ok=True)
+                    feedback_file.write_text(
+                        fb_resp.text or "(no feedback recorded)", encoding="utf-8"
+                    )
+                except Exception:
+                    pass  # non-critical: synthesis succeeded even if feedback write fails
+
         return result or results_text

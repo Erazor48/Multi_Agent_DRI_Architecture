@@ -889,9 +889,13 @@ async def _run_task_force(
     )
     manager._spawner = spawner  # type: ignore[attr-defined]
 
+    snapshot = _workspace_snapshot(workspace_root)
     task = Task(
         description=task_description,
-        context=f"Company: {company.name}\nVision: {company.vision}",
+        context=(
+            f"Company: {company.name}\nVision: {company.vision}\n\n"
+            f"**Current workspace (verified on disk):**\n{snapshot}"
+        ),
         assigned_to=config.id,
         delegated_by="ceo",
     )

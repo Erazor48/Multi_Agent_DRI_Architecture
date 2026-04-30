@@ -115,6 +115,12 @@ class BaseAgent(ABC):
                 result = await self._run_task(task)
             self._timeout_ctx = None
 
+            if self._ctx.memory_dept:
+                try:
+                    await self._ensure_expertise_written(task)
+                except Exception:
+                    pass  # non-critical: task succeeded even if expertise write fails
+
             self._cleanup_wip()
             await self._set_status(AgentStatus.DONE)
             alloc = self._budget_manager.get_allocation(self.agent_id)
@@ -422,6 +428,32 @@ class BaseAgent(ABC):
             memory_dept=self._ctx.memory_dept,
         )
         return mem.load() if mem is not None else ""
+
+    async def _ensure_expertise_written(self, task: Task) -> None:
+        """
+        Fallback guarantee: if the LLM forgot to write expertise.md, generate a
+        minimal version via a short LLM call. Called by run() after every successful task.
+        """
+        kpath = self._knowledge_path_str()
+        if not kpath or not self._ctx.workspace_root:
+            return
+        expertise_file = Path(self._ctx.workspace_root) / kpath / "expertise.md"
+        if expertise_file.exists():
+            return
+        response = await self._call_llm(
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"You just completed this task: {task.description[:200]}\n\n"
+                    "Write a brief expertise.md (max 30 lines) with:\n"
+                    "- What worked well\n- Pitfalls encountered\n- Domain patterns to remember\n"
+                    "Write only the file content, no preamble."
+                ),
+            }],
+            estimated_tokens=2000,
+        )
+        expertise_file.parent.mkdir(parents=True, exist_ok=True)
+        expertise_file.write_text(response.text or "(no expertise recorded)", encoding="utf-8")
 
     def _knowledge_path_str(self, title: str | None = None) -> str | None:
         """
