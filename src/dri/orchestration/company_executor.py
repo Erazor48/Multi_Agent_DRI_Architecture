@@ -16,7 +16,7 @@ from dri.config.settings import settings
 from dri.core.models import CompanyMessage, PersistentCompany
 from dri.llm.factory import create_provider
 from dri.storage.database import get_session, init_db
-from dri.storage.repositories import CompanyMessageRepository, PersistentCompanyRepository
+from dri.storage.repositories import CompanyAgentRepository, CompanyMessageRepository, PersistentCompanyRepository
 
 
 # ── Conversation summarization thresholds ────────────────────────────────
@@ -609,6 +609,58 @@ def _workspace_snapshot(workspace_root: str) -> str:
     return "\n".join(lines)
 
 
+def _append_company_history(
+    *,
+    workspace_root: str,
+    task_description: str,
+    registry: Any,
+    report: Any,
+    tokens_total: int,
+) -> None:
+    """Append one entry to shared/_company_history.md (Layer 6). Non-critical — errors are swallowed."""
+    from datetime import datetime, timezone
+    from pathlib import Path as _Path
+    from dri.core.models import AgentStatus as _AgentStatus, TaskStatus as _TaskStatus
+
+    try:
+        ws = _Path(workspace_root)
+        history_file = ws / "shared" / "_company_history.md"
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        task_summary = task_description[:80].replace("\n", " ")
+
+        workers = registry.all_workers()
+        sub_managers = [n for n in registry.all_managers() if n.title != "Task Force Lead"]
+
+        team_members = [n.title for n in sub_managers] + [n.title for n in workers]
+        team_str = "Task Force Lead → " + ", ".join(team_members) if team_members else "Task Force Lead (solo)"
+
+        done_workers = sum(1 for n in workers if n.status == _AgentStatus.DONE)
+        fail_workers = sum(1 for n in workers if n.status == _AgentStatus.FAILED)
+        total_workers = len(workers)
+
+        if report.status == _TaskStatus.DONE:
+            outcome = "DONE" if fail_workers == 0 else f"PARTIAL ({done_workers}/{total_workers} workers succeeded)"
+        else:
+            outcome = f"FAILED ({done_workers}/{total_workers} workers succeeded)"
+
+        entry = (
+            f"\n## {today} — {task_summary}\n"
+            f"- Team: {team_str}\n"
+            f"- Outcome: {outcome}\n"
+            f"- Tokens: {tokens_total:,}\n"
+        )
+
+        is_new = not history_file.exists() or history_file.stat().st_size == 0
+        with history_file.open("a", encoding="utf-8") as f:
+            if is_new:
+                f.write("# Company Task History\n")
+            f.write(entry)
+    except Exception:
+        pass  # History log is non-critical
+
+
 async def _run_task_force(
     *,
     company: PersistentCompany,
@@ -662,7 +714,7 @@ async def _run_task_force(
     ]
     official_folders_str = "\n".join(f"  - {f}" for f in official_folders)
 
-    # Load company knowledge base if it exists — injected into every task force context.
+    # Load company knowledge base + task history — both injected into the task force lead.
     from pathlib import Path as _Path
     _kb_path = _Path(workspace_root) / "shared" / "_company_knowledge.md"
     _company_kb = ""
@@ -671,6 +723,17 @@ async def _run_task_force(
             _kb_content = _kb_path.read_text(encoding="utf-8").strip()
             if _kb_content:
                 _company_kb = f"\n\n## Company Knowledge Base\n{_kb_content[:3000]}"
+        except OSError:
+            pass
+
+    _history_path = _Path(workspace_root) / "shared" / "_company_history.md"
+    _company_history = ""
+    if _history_path.exists():
+        try:
+            _history_content = _history_path.read_text(encoding="utf-8").strip()
+            if _history_content:
+                # Keep only the last 3000 chars (most recent entries)
+                _company_history = f"\n\n## Company Task History\n{_history_content[-3000:]}"
         except OSError:
             pass
 
@@ -686,6 +749,7 @@ async def _run_task_force(
             f"You are a task force lead for **{company.name}**.\n"
             f"Company vision: {company.vision}\n"
             + _company_kb
+            + _company_history
             + f"\n\nOfficial workspace folders:\n{official_folders_str}\n"
             "Any folder NOT in this list is a rogue artifact and must be deleted during cleanup.\n\n"
             f"Your task: {task_description}\n\n"
@@ -822,6 +886,31 @@ async def _run_task_force(
     for wip_dir in sorted(_Path(workspace_root).rglob("_wip"), reverse=True):
         if wip_dir.is_dir():
             _shutil.rmtree(str(wip_dir), ignore_errors=True)
+
+    # Layer 5: Record persistent agent identities + task performance.
+    from dri.core.models import AgentStatus as _AgentStatus
+    all_nodes = list(registry.snapshot().nodes.values())
+    tokens_total = sum(n.tokens_used for n in all_nodes)
+
+    async with get_session() as db:
+        ca_repo = CompanyAgentRepository(db)
+        for node in all_nodes:
+            ca = await ca_repo.get_or_create(
+                company_id=company.id,
+                title=node.title,
+                role=node.role.value,
+                dept_slug=_company_slug(node.title),
+            )
+            await ca_repo.record_task(ca.id, success=(node.status == _AgentStatus.DONE))
+
+    # Layer 6: Append an entry to the company task history log.
+    _append_company_history(
+        workspace_root=workspace_root,
+        task_description=task_description,
+        registry=registry,
+        report=report,
+        tokens_total=tokens_total,
+    )
 
     async with get_session() as db:
         session_repo = SessionRepository(db)

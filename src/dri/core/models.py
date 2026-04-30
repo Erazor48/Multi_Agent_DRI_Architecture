@@ -307,6 +307,29 @@ class CompanyMessage(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class CompanyAgent(BaseModel):
+    """Persistent identity for an agent within a company across all task forces."""
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    company_id: str
+    title: str                        # e.g. "SEO Specialist"
+    role: str                         # "manager" | "worker"
+    dept_slug: str = ""               # derived from title slug
+    task_count: int = 0
+    success_count: int = 0
+    token_budget: int = 0             # 0 = use system default; set via CLI promote
+    notes: str = ""
+    status: str = "active"            # "active" | "inactive"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_active_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def success_rate(self) -> float:
+        if self.task_count == 0:
+            return 0.0
+        return self.success_count / self.task_count
+
+
 # ──────────────────────────────────────────────────────────────
 # Session
 # ──────────────────────────────────────────────────────────────

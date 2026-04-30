@@ -5,6 +5,7 @@ No business logic here; only mapping between domain models and ORM.
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import delete, select, update
@@ -16,6 +17,7 @@ from dri.core.models import (
     AgentState,
     AgentStatus,
     BudgetAllocation,
+    CompanyAgent,
     CompanyMessage,
     Message,
     PersistentCompany,
@@ -24,7 +26,7 @@ from dri.core.models import (
     Task,
     TaskStatus,
 )
-from dri.storage.orm import AgentORM, CompanyMessageORM, MessageORM, PersistentCompanyORM, SessionORM, TaskORM, ToolCallORM
+from dri.storage.orm import AgentORM, CompanyAgentORM, CompanyMessageORM, MessageORM, PersistentCompanyORM, SessionORM, TaskORM, ToolCallORM
 
 
 # ──────────────────────────────────────────────────────────────
@@ -430,6 +432,102 @@ class CompanyMessageRepository:
             content=summary.content,
             created_at=summary.created_at,
         ))
+
+
+# ──────────────────────────────────────────────────────────────
+# Company Agent Repository (Layer 5 — persistent agent identities)
+# ──────────────────────────────────────────────────────────────
+
+
+class CompanyAgentRepository:
+    def __init__(self, db: AsyncSession) -> None:
+        self._db = db
+
+    async def get_or_create(
+        self,
+        company_id: str,
+        title: str,
+        role: str,
+        dept_slug: str,
+    ) -> CompanyAgent:
+        """Return the existing CompanyAgent record for this title, or create one."""
+        result = await self._db.execute(
+            select(CompanyAgentORM)
+            .where(CompanyAgentORM.company_id == company_id)
+            .where(CompanyAgentORM.title == title)
+        )
+        row = result.scalar_one_or_none()
+        if row is not None:
+            return self._orm_to_domain(row)
+        new_orm = CompanyAgentORM(
+            id=str(uuid.uuid4()),
+            company_id=company_id,
+            title=title,
+            role=role,
+            dept_slug=dept_slug,
+        )
+        self._db.add(new_orm)
+        await self._db.flush()
+        return self._orm_to_domain(new_orm)
+
+    async def record_task(self, agent_id: str, *, success: bool) -> None:
+        """Increment task_count (+success_count if success) and refresh last_active_at."""
+        row = await self._db.get(CompanyAgentORM, agent_id)
+        if row is not None:
+            row.task_count += 1
+            if success:
+                row.success_count += 1
+            row.last_active_at = datetime.now(timezone.utc)
+
+    async def list_active(self, company_id: str) -> list[CompanyAgent]:
+        result = await self._db.execute(
+            select(CompanyAgentORM)
+            .where(CompanyAgentORM.company_id == company_id)
+            .where(CompanyAgentORM.status == "active")
+            .order_by(CompanyAgentORM.last_active_at.desc())
+        )
+        return [self._orm_to_domain(row) for row in result.scalars()]
+
+    async def get_by_title(self, company_id: str, title: str) -> CompanyAgent | None:
+        result = await self._db.execute(
+            select(CompanyAgentORM)
+            .where(CompanyAgentORM.company_id == company_id)
+            .where(CompanyAgentORM.title == title)
+        )
+        row = result.scalar_one_or_none()
+        return self._orm_to_domain(row) if row is not None else None
+
+    async def set_notes(self, agent_id: str, notes: str) -> None:
+        await self._db.execute(
+            update(CompanyAgentORM).where(CompanyAgentORM.id == agent_id).values(notes=notes)
+        )
+
+    async def set_status(self, agent_id: str, status: str) -> None:
+        await self._db.execute(
+            update(CompanyAgentORM).where(CompanyAgentORM.id == agent_id).values(status=status)
+        )
+
+    async def set_budget(self, agent_id: str, budget: int) -> None:
+        await self._db.execute(
+            update(CompanyAgentORM).where(CompanyAgentORM.id == agent_id).values(token_budget=budget)
+        )
+
+    @staticmethod
+    def _orm_to_domain(orm: CompanyAgentORM) -> CompanyAgent:
+        return CompanyAgent(
+            id=orm.id,
+            company_id=orm.company_id,
+            title=orm.title,
+            role=orm.role,
+            dept_slug=orm.dept_slug,
+            task_count=orm.task_count,
+            success_count=orm.success_count,
+            token_budget=orm.token_budget,
+            notes=orm.notes,
+            status=orm.status,
+            created_at=orm.created_at,
+            last_active_at=orm.last_active_at,
+        )
 
 
 # ──────────────────────────────────────────────────────────────

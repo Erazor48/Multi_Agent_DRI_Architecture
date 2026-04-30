@@ -444,36 +444,38 @@ Layer 0 (ACTIVE): DB Persistence (metadata only)
   company_messages: full CEO conversation history (with summary records).
   agents / tasks / tool_calls: operational metadata per session.
 
-Layer 5 (PLANNED — next agent): Persistent Agent Identities
-  Table: company_agents (id, company_id, title, role, task_count, success_rate, last_active_at, notes)
-  Instead of always spawning fresh agents, reuse known agent IDs for the same title.
-  CLI: dri company team list / show / remove
-  Enables: performance tracking, promotions, dismissals, personal history.
+Layer 5 (ACTIVE): Persistent Agent Identities
+  Table: company_agents (id, company_id, title, role, dept_slug, task_count, success_count,
+         token_budget, notes, status, created_at, last_active_at)
+  Written by: _run_task_force() after every task force — all registry nodes recorded.
+  CLI: dri company team list / show / note / remove / promote
+  Enables: performance tracking, success rate, custom budget, soft-delete.
+  Note: token_budget stored but not yet applied at spawn time (future iteration).
 
-Layer 6 (PLANNED — next agent): Company Task History
+Layer 6 (ACTIVE): Company Task History
   File: shared/_company_history.md
-  Append-only log: date, task, outcomes, files produced.
-  Written by task force lead at end of each task force run.
-  Gives CEO grounded context on everything the company has done.
+  Append-only log: date, task summary, team, outcome, tokens used.
+  Written by: _append_company_history() in company_executor.py after every task force.
+  Read by: task force lead (injected in mission as "## Company Task History", last 3000 chars).
 ```
 
 ---
 
-## Current Implementation State (as of 2026-04-29)
+## Current Implementation State (as of 2026-04-30)
 
 ### Completed
 - [x] CLAUDE.md
 - [x] pyproject.toml
 - [x] .env.example — includes connector settings (SMTP, webhook docs)
 - [x] src/dri/config/settings.py — SMTP settings added (smtp_host/port/user/password/from)
-- [x] src/dri/core/models.py
+- [x] src/dri/core/models.py — includes CompanyAgent (Layer 5)
 - [x] src/dri/core/registry.py
 - [x] src/dri/core/memory.py — ContextPacket + AgentMemory (layer 2 persistent memory) + agent_memory field
 - [x] src/dri/core/budget.py
 - [x] src/dri/core/communication.py
 - [x] src/dri/storage/database.py
-- [x] src/dri/storage/orm.py
-- [x] src/dri/storage/repositories.py — includes `remove_department`, `replace_with_summary` (CEO history compression)
+- [x] src/dri/storage/orm.py — includes CompanyAgentORM (Layer 5)
+- [x] src/dri/storage/repositories.py — includes CompanyAgentRepository (Layer 5), `remove_department`, `replace_with_summary`
 - [x] src/dri/skills/base.py + catalog.py + registry.py
 - [x] src/dri/tools/base.py + __init__.py
 - [x] src/dri/tools/web_search.py
@@ -487,14 +489,14 @@ Layer 6 (PLANNED — next agent): Company Task History
 - [x] src/dri/agents/worker.py — knowledge update instruction: writes expertise.md at end of each task.
 - [x] src/dri/orchestration/spawner.py — RBAC permissions, auto-include file tools
 - [x] src/dri/orchestration/executor.py
-- [x] src/dri/orchestration/company_executor.py — persistent company mode. CEO conversation summarization (layer 4). Company knowledge base injection into task force lead (layer 3). _knowledge excluded from workspace snapshot.
+- [x] src/dri/orchestration/company_executor.py — Layer 3 (company KB), Layer 4 (CEO summarization), Layer 5 (agent tracking via _run_task_force), Layer 6 (history log + injection). _append_company_history() writes shared/_company_history.md.
 - [x] src/dri/connectors/base.py — BaseConnector ABC + ConnectorResult
 - [x] src/dri/connectors/registry.py — ConnectorRegistry (dedup on register)
 - [x] src/dri/connectors/email_smtp.py — SMTP email (Gmail, Outlook, any SMTP)
 - [x] src/dri/connectors/webhook.py — HTTP POST (Slack, Discord, Make.com, Zapier, n8n, custom)
 - [x] src/dri/connectors/__init__.py
-- [x] src/dri/api/cli.py — all commands + connector dispatch on approval + Windows UTF-8 fix. approvals show/approve/reject use 1-based position index (not stored ID).
-- [x] tests/unit/ (models, budget, memory, tools, registry, connectors) — 87/87 passing
+- [x] src/dri/api/cli.py — all commands + connector dispatch on approval + Windows UTF-8 fix. `dri company team list/show/note/remove/promote` (Layer 5 CLI).
+- [x] tests/unit/ — 101/101 passing (14 new tests for CompanyAgentRepository)
 
 ### Connectors (all completed 2026-04-27)
 - [x] Slack Bot Token — `src/dri/connectors/slack_bot.py`
@@ -502,60 +504,17 @@ Layer 6 (PLANNED — next agent): Company Task History
 - [x] SendGrid — `src/dri/connectors/sendgrid_email.py`
 - [x] LinkedIn — `src/dri/connectors/linkedin.py`
 
-### NEXT AGENT PRIORITY: Persistent Agent Identities (Layer 5)
+### NEXT AGENT PRIORITY: GitHub connector + Budget override at spawn
 
-**Goal**: agents are not anonymous instances — they have persistent identities that accumulate
-performance history across tasks. The CEO can see "his team", promote good performers, remove bad ones.
+**Layer 5 remaining**: `token_budget` is stored via `dri company team promote` but not yet
+applied at spawn time. To wire it up, `_run_task_force()` could look up known agents'
+custom budgets and pass them to the manager so it can use them when building SpawnRequests.
+This requires modifying how the manager allocates child budgets (LLM decides today).
 
-**Implementation plan (no user approval needed — founder validated this direction):**
-
-#### Step 1 — DB model + ORM + repository
-New table `company_agents`:
-```python
-# orm.py
-class CompanyAgentORM(Base):
-    __tablename__ = "company_agents"
-    id: str (UUID PK)
-    company_id: str (FK → persistent_companies.id)
-    title: str          # "Chief Marketing Officer"
-    role: str           # "manager" | "worker"
-    dept_slug: str      # "chief-marketing-officer"
-    task_count: int     # total tasks run
-    success_count: int  # tasks completed successfully
-    token_budget: int   # current budget allocation (can be changed by CEO)
-    created_at: datetime
-    last_active_at: datetime
-    notes: str          # CEO can write notes on this agent ("needs improvement on X")
-    status: str         # "active" | "inactive" (soft-delete)
-```
-New domain model `CompanyAgent` in `models.py`.
-New `CompanyAgentRepository` in `repositories.py`.
-
-#### Step 2 — CompanyExecutor integration
-In `_run_task_force()`, after the task completes:
-- Look up or create a `CompanyAgent` record for each agent title in the task force
-- Increment `task_count`, `success_count` (if DONE), update `last_active_at`
-- Use `company_agent.token_budget` when allocating budget for known agents (instead of default)
-
-#### Step 3 — CLI commands
-```bash
-dri company team list                          # table: title, tasks, success_rate, last_active
-dri company team show "SEO Specialist"         # full profile + notes + memory path
-dri company team note "SEO Specialist" "Needs improvement on keyword density"
-dri company team remove "SEO Specialist"       # mark inactive (soft delete)
-dri company team promote "CMO" --budget 500000 # increase token budget
-```
-
-#### Step 4 — Company Task History (Layer 6)
-At end of `_run_task_force()`, append to `shared/_company_history.md`:
-```markdown
-## 2026-04-29 — [Task summary, 1 line]
-- Team: Task Force Lead → [worker1], [worker2]
-- Outcome: DONE / PARTIAL (N workers failed)
-- Key files produced: [list]
-- Tokens used: N
-```
-Task force lead reads this file at start (already gets company KB — extend to include history).
+**GitHub connector** — lets agents push real code:
+- `create_repo` / `push_branch` / `create_pr` via GitHub API
+- action_type `github_action`. Requires `GITHUB_TOKEN` in .env.
+- Same propose_external_action approval flow — agent proposes, founder approves, connector executes.
 
 ### Other remaining improvements
 - **Budget borrowing** — unused sibling tokens pooled for reuse.

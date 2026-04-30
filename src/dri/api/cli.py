@@ -652,6 +652,215 @@ def approvals_reject(
     console.print(f"[red]Action #{action_id} rejected.[/red]")
 
 
+# ── Team commands ──────────────────────────────────────────────────────────────
+
+team_app = typer.Typer(name="team", help="Manage persistent agent identities in a company.")
+company_app.add_typer(team_app, name="team")
+
+
+@team_app.command("list")
+def team_list(
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+) -> None:
+    """List all team members and their performance stats."""
+    from rich.table import Table
+
+    async def _run() -> tuple[list, str]:
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import CompanyAgentRepository
+        c = await _resolve_company(company_id)
+        if c is None:
+            return [], ""
+        await init_db()
+        async with get_session() as db:
+            repo = CompanyAgentRepository(db)
+            agents = await repo.list_active(c.id)
+        return agents, c.name
+
+    agents, cname = asyncio.run(_run())
+    if not cname:
+        console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
+        raise typer.Exit(1)
+    if not agents:
+        console.print(f"[dim]No team members recorded for {cname} yet. Run a task to populate.[/dim]")
+        return
+
+    table = Table(title=f"Team — {cname}", show_lines=True)
+    table.add_column("Title", style="bold")
+    table.add_column("Role", width=10)
+    table.add_column("Tasks", justify="right", width=7)
+    table.add_column("Success", justify="right", width=9)
+    table.add_column("Rate", justify="right", width=7)
+    table.add_column("Budget", justify="right", width=10)
+    table.add_column("Last Active", style="dim", width=17)
+    table.add_column("Notes", style="dim")
+
+    for a in agents:
+        rate = f"{a.success_rate:.0%}"
+        rate_color = "green" if a.success_rate >= 0.8 else ("yellow" if a.success_rate >= 0.5 else "red")
+        budget_str = f"{a.token_budget:,}" if a.token_budget > 0 else "[dim]default[/dim]"
+        table.add_row(
+            a.title,
+            a.role,
+            str(a.task_count),
+            str(a.success_count),
+            f"[{rate_color}]{rate}[/{rate_color}]",
+            budget_str,
+            a.last_active_at.strftime("%Y-%m-%d %H:%M"),
+            a.notes[:40] or "[dim]—[/dim]",
+        )
+    console.print(table)
+    console.print("[dim]Use [bold]dri company team show <title>[/bold] for full profile.[/dim]")
+
+
+@team_app.command("show")
+def team_show(
+    title: str = typer.Argument(..., help="Agent title (e.g. 'SEO Specialist')"),
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+) -> None:
+    """Show the full profile of a team member."""
+    async def _run():
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import CompanyAgentRepository
+        c = await _resolve_company(company_id)
+        if c is None:
+            return None, None
+        await init_db()
+        async with get_session() as db:
+            repo = CompanyAgentRepository(db)
+            agent = await repo.get_by_title(c.id, title)
+        return agent, c
+
+    agent, company = asyncio.run(_run())
+    if company is None:
+        console.print("[red]No company found.[/red]")
+        raise typer.Exit(1)
+    if agent is None:
+        console.print(f"[red]No team member named '{title}' found.[/red]")
+        console.print("[dim]Use [bold]dri company team list[/bold] to see all members.[/dim]")
+        raise typer.Exit(1)
+
+    import re
+    knowledge_path = (
+        f"workspace/{re.sub(r'[^a-z0-9]+', '-', company.name.lower()).strip('-')}/"
+        f"{agent.dept_slug}/_knowledge/"
+        f"{re.sub(r'[^a-z0-9]+', '-', agent.title.lower()).strip('-')}/"
+    )
+    rate_color = "green" if agent.success_rate >= 0.8 else ("yellow" if agent.success_rate >= 0.5 else "red")
+
+    console.print()
+    console.print(Panel(
+        f"[bold]Title:[/bold] {agent.title}\n"
+        f"[bold]Role:[/bold] {agent.role}\n"
+        f"[bold]Status:[/bold] {agent.status}\n"
+        f"[bold]Tasks run:[/bold] {agent.task_count}  "
+        f"[bold]Succeeded:[/bold] {agent.success_count}  "
+        f"[bold]Rate:[/bold] [{rate_color}]{agent.success_rate:.0%}[/{rate_color}]\n"
+        f"[bold]Token budget:[/bold] {agent.token_budget:,} (0 = system default)\n"
+        f"[bold]Last active:[/bold] {agent.last_active_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"[bold]Joined:[/bold] {agent.created_at.strftime('%Y-%m-%d')}\n\n"
+        f"[bold]Notes:[/bold]\n{agent.notes or '(none)'}\n\n"
+        f"[bold]Persistent memory path:[/bold]\n[dim]{knowledge_path}[/dim]",
+        title=f"[bold]{agent.title}[/bold]",
+        border_style="blue",
+    ))
+    console.print()
+
+
+@team_app.command("note")
+def team_note(
+    title: str = typer.Argument(..., help="Agent title"),
+    note: str = typer.Argument(..., help="Note to attach to this agent"),
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+) -> None:
+    """Attach a note to a team member (replaces existing note)."""
+    async def _run() -> bool:
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import CompanyAgentRepository
+        c = await _resolve_company(company_id)
+        if c is None:
+            return False
+        await init_db()
+        async with get_session() as db:
+            repo = CompanyAgentRepository(db)
+            agent = await repo.get_by_title(c.id, title)
+            if agent is None:
+                return False
+            await repo.set_notes(agent.id, note)
+        return True
+
+    found = asyncio.run(_run())
+    if not found:
+        console.print(f"[red]Agent '{title}' not found.[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Note updated for '{title}'.[/green]")
+
+
+@team_app.command("remove")
+def team_remove(
+    title: str = typer.Argument(..., help="Agent title to deactivate"),
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Mark a team member as inactive (soft delete — history preserved)."""
+    async def _run() -> tuple[bool, str]:
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import CompanyAgentRepository
+        c = await _resolve_company(company_id)
+        if c is None:
+            return False, ""
+        await init_db()
+        async with get_session() as db:
+            repo = CompanyAgentRepository(db)
+            agent = await repo.get_by_title(c.id, title)
+            if agent is None:
+                return False, ""
+            await repo.set_status(agent.id, "inactive")
+        return True, c.name
+
+    if not force:
+        confirmed = typer.confirm(f"Mark '{title}' as inactive?", default=False)
+        if not confirmed:
+            console.print("[dim]Cancelled.[/dim]")
+            raise typer.Exit(0)
+
+    found, cname = asyncio.run(_run())
+    if not found:
+        console.print(f"[red]Agent '{title}' not found.[/red]")
+        raise typer.Exit(1)
+    console.print(f"[yellow]'{title}' marked inactive. History preserved in DB.[/yellow]")
+
+
+@team_app.command("promote")
+def team_promote(
+    title: str = typer.Argument(..., help="Agent title to promote"),
+    budget: int = typer.Option(..., "--budget", "-b", help="New token budget for this agent"),
+    company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+) -> None:
+    """Set a custom token budget for a team member (stored for future task forces)."""
+    async def _run() -> bool:
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import CompanyAgentRepository
+        c = await _resolve_company(company_id)
+        if c is None:
+            return False
+        await init_db()
+        async with get_session() as db:
+            repo = CompanyAgentRepository(db)
+            agent = await repo.get_by_title(c.id, title)
+            if agent is None:
+                return False
+            await repo.set_budget(agent.id, budget)
+        return True
+
+    found = asyncio.run(_run())
+    if not found:
+        console.print(f"[red]Agent '{title}' not found.[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]'{title}' token budget set to {budget:,}.[/green]")
+    console.print("[dim]Budget stored — applied to future task forces involving this agent.[/dim]")
+
+
 @company_app.command("decommission")
 def company_decommission(
     title: str = typer.Argument(..., help="Exact department title to decommission (e.g. 'Chief Marketing Officer')"),

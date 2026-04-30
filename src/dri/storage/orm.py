@@ -105,6 +105,7 @@ class PersistentCompanyORM(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     messages: Mapped[list["CompanyMessageORM"]] = relationship("CompanyMessageORM", back_populates="company")
+    agents: Mapped[list["CompanyAgentORM"]] = relationship("CompanyAgentORM", back_populates="company")
 
 
 class CompanyMessageORM(Base):
@@ -117,6 +118,25 @@ class CompanyMessageORM(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     company: Mapped[PersistentCompanyORM] = relationship("PersistentCompanyORM", back_populates="messages")
+
+
+class CompanyAgentORM(Base):
+    __tablename__ = "company_agents"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    company_id: Mapped[str] = mapped_column(String, ForeignKey("persistent_companies.id"), index=True)
+    title: Mapped[str] = mapped_column(String)
+    role: Mapped[str] = mapped_column(String)          # "manager" | "worker"
+    dept_slug: Mapped[str] = mapped_column(String, default="")
+    task_count: Mapped[int] = mapped_column(Integer, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, default=0)
+    token_budget: Mapped[int] = mapped_column(Integer, default=0)  # 0 = use system default
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    last_active_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String, default="active")  # "active" | "inactive"
+
+    company: Mapped["PersistentCompanyORM"] = relationship("PersistentCompanyORM", back_populates="agents")
 
 
 class ToolCallORM(Base):
