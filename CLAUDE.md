@@ -171,6 +171,13 @@ workspace/momentum/
 │       └── chief-marketing-officer/
 ├── chief-marketing-officer/
 │   ├── _wip/                      ← EPHEMERAL: deleted by framework after every task
+│   ├── _knowledge/                ← PERSISTENT: agent adaptive memory, never deleted
+│   │   ├── chief-marketing-officer/
+│   │   │   ├── expertise.md       ← manager's accumulated domain knowledge
+│   │   │   └── feedback.md        ← feedback written by CEO/parent
+│   │   └── seo-specialist/
+│   │       ├── expertise.md       ← worker's accumulated domain knowledge
+│   │       └── feedback.md        ← feedback written by manager after task review
 │   └── strategy.md                ← deliverable: persists
 ├── chief-technology-officer/
 │   └── ...
@@ -190,6 +197,21 @@ workspace/momentum/
 `BaseAgent._cleanup_wip()` is called by the **framework** (not the LLM) after every task
 completion or failure, before `_fail_report()`. This is unconditional — the LLM cannot
 skip or forget it. `_wip/` files never survive a task boundary.
+
+### `_knowledge/` adaptive memory
+
+`_knowledge/<title-slug>/` persists indefinitely — it is **never** touched by `_cleanup_wip()`.
+
+- **expertise.md** — written by the agent itself (via `file_write`) at the end of each task.
+  Contains: patterns that worked, pitfalls to avoid, domain insights.
+- **feedback.md** — written by the parent manager after evaluating the worker's output.
+  Contains: what was done well, concrete improvements, domain rules.
+
+Before each task, `BaseAgent.run()` loads these files via `AgentMemory.for_agent()` and
+injects them as `ContextPacket.agent_memory` → the `## Your Persistent Memory` section
+of the system prompt. The agent cannot ignore it — it's in the system prompt, not a file to read.
+
+`_knowledge/` is excluded from `_inventory_dept_files()` so it never appears in agent reports.
 
 ---
 
@@ -303,7 +325,7 @@ Key types (all Pydantic v2):
 - `Task`: id, description, assigned_to, status, result
 - `BudgetAllocation`: total, used, remaining per agent
 - `PersistentCompany`: id, name, vision, pitch, org_structure, status
-- `CompanyMessage`: id, company_id, role (user/ceo), content
+- `CompanyMessage`: id, company_id, role (user/ceo/summary), content
 
 ---
 
@@ -386,7 +408,58 @@ uv run pytest            # run tests
 
 ---
 
-## Current Implementation State (as of 2026-04-28)
+## Memory Architecture — Complete System (as of 2026-04-29)
+
+The system has 4 active memory layers plus 2 planned layers:
+
+```
+Layer 4 (ACTIVE): CEO Conversation Summarization
+  When > 40 non-summary messages, compress oldest → single summary record in DB.
+  Role "summary" in company_messages. Built by _maybe_summarize_ceo_history().
+  _build_ceo_messages() prepends summary to first user message in window.
+  Cycle: 40 msgs → summarize → keep 14 verbatim → accumulate 26 more → repeat.
+
+Layer 3 (ACTIVE): Company Knowledge Base
+  File: shared/_company_knowledge.md
+  Written by: CEO-spawned team after major decisions / milestones.
+  Read by: every task force lead (injected into mission at task start).
+  Sections: ## Strategic Decisions / ## Brand & Voice / ## Technical Stack /
+            ## Completed Milestones / ## Lessons Learned
+  This is the institutional long-term memory shared across all agents.
+
+Layer 2 (ACTIVE): Role Persistent Memory
+  Location: <dept>/_knowledge/<title-slug>/
+  Files: expertise.md (self-written by agent) + feedback.md (written by manager).
+  Read by: BaseAgent.run() before each task → injected in ContextPacket.agent_memory
+           → "## Your Persistent Memory" section in system prompt.
+  Written by: worker via file_write at end of task (task prompt instruction).
+             manager via file_write after synthesis (feedback to each worker).
+  Never cleaned by _cleanup_wip(). Excluded from inventory + workspace snapshot.
+
+Layer 1 (ACTIVE): Active Context Pruning
+  Agentic loop: _MAX_HISTORY_ROUNDS = 12 (last 12 tool-call rounds kept).
+  CEO chat: 14 verbatim messages + optional summary prefix.
+
+Layer 0 (ACTIVE): DB Persistence (metadata only)
+  company_messages: full CEO conversation history (with summary records).
+  agents / tasks / tool_calls: operational metadata per session.
+
+Layer 5 (PLANNED — next agent): Persistent Agent Identities
+  Table: company_agents (id, company_id, title, role, task_count, success_rate, last_active_at, notes)
+  Instead of always spawning fresh agents, reuse known agent IDs for the same title.
+  CLI: dri company team list / show / remove
+  Enables: performance tracking, promotions, dismissals, personal history.
+
+Layer 6 (PLANNED — next agent): Company Task History
+  File: shared/_company_history.md
+  Append-only log: date, task, outcomes, files produced.
+  Written by task force lead at end of each task force run.
+  Gives CEO grounded context on everything the company has done.
+```
+
+---
+
+## Current Implementation State (as of 2026-04-29)
 
 ### Completed
 - [x] CLAUDE.md
@@ -395,12 +468,12 @@ uv run pytest            # run tests
 - [x] src/dri/config/settings.py — SMTP settings added (smtp_host/port/user/password/from)
 - [x] src/dri/core/models.py
 - [x] src/dri/core/registry.py
-- [x] src/dri/core/memory.py — ContextPacket + system prompt with integrity + file lifecycle rules
+- [x] src/dri/core/memory.py — ContextPacket + AgentMemory (layer 2 persistent memory) + agent_memory field
 - [x] src/dri/core/budget.py
 - [x] src/dri/core/communication.py
 - [x] src/dri/storage/database.py
 - [x] src/dri/storage/orm.py
-- [x] src/dri/storage/repositories.py — includes `remove_department`
+- [x] src/dri/storage/repositories.py — includes `remove_department`, `replace_with_summary` (CEO history compression)
 - [x] src/dri/skills/base.py + catalog.py + registry.py
 - [x] src/dri/tools/base.py + __init__.py
 - [x] src/dri/tools/web_search.py
@@ -408,44 +481,95 @@ uv run pytest            # run tests
 - [x] src/dri/tools/file_ops.py — file_read / file_write / file_list / file_delete + RBAC. File handle uses context manager. Delete counter is per-agent-per-folder (keyed by `_agent_id`).
 - [x] src/dri/tools/external_actions.py — propose_external_action + enum validation + content check. action_id is now UUID string (no race condition).
 - [x] src/dri/tools/shell_exec.py — shell_exec tool: allowlisted executables (bun/uv/ffmpeg/git/node/…), CWD sandboxed to workspace, no shell=True, 300s max timeout, 20k char output cap.
-- [x] src/dri/agents/base.py — _cleanup_wip / _inventory_dept_files / _fail_report enriched. Injects `_agent_id` into file tool calls. `_SHELL_TOOLS` set injects `_workspace_root` into shell_exec.
+- [x] src/dri/agents/base.py — _cleanup_wip / _inventory_dept_files / _fail_report. Persistent memory: _load_agent_memory() + _knowledge_path_str(). Memory loaded before each task into ContextPacket.agent_memory.
 - [x] src/dri/agents/root.py — fixed __import__ → proper top-level imports
-- [x] src/dri/agents/manager.py — synthesis uses agentic loop (can read files). _plan_org retries once with stricter prompt if LLM skips tool call.
-- [x] src/dri/agents/worker.py
+- [x] src/dri/agents/manager.py — synthesis uses agentic loop. Writes targeted feedback to each worker's _knowledge/feedback.md after synthesis.
+- [x] src/dri/agents/worker.py — knowledge update instruction: writes expertise.md at end of each task.
 - [x] src/dri/orchestration/spawner.py — RBAC permissions, auto-include file tools
 - [x] src/dri/orchestration/executor.py
-- [x] src/dri/orchestration/company_executor.py — persistent company mode + Tool allocation rules. CEO loop 20 rounds. Task force lead gets web_search if configured.
+- [x] src/dri/orchestration/company_executor.py — persistent company mode. CEO conversation summarization (layer 4). Company knowledge base injection into task force lead (layer 3). _knowledge excluded from workspace snapshot.
 - [x] src/dri/connectors/base.py — BaseConnector ABC + ConnectorResult
 - [x] src/dri/connectors/registry.py — ConnectorRegistry (dedup on register)
 - [x] src/dri/connectors/email_smtp.py — SMTP email (Gmail, Outlook, any SMTP)
 - [x] src/dri/connectors/webhook.py — HTTP POST (Slack, Discord, Make.com, Zapier, n8n, custom)
 - [x] src/dri/connectors/__init__.py
 - [x] src/dri/api/cli.py — all commands + connector dispatch on approval + Windows UTF-8 fix. approvals show/approve/reject use 1-based position index (not stored ID).
-- [x] tests/unit/ (models, budget, memory, tools, registry, connectors) — 77/77 passing
+- [x] tests/unit/ (models, budget, memory, tools, registry, connectors) — 87/87 passing
 
-### Pending — connectors roadmap (validated by founder 2026-04-27, implement in order)
-- [x] **#1 Connector: Slack Bot Token** — `SLACK_BOT_TOKEN` + `SLACK_DEFAULT_CHANNEL`. action_type `slack_message` (new) or `webhook` + channel/user ID. `src/dri/connectors/slack_bot.py`.
-- [x] **#2 Connector: Twilio SMS** — `TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN + TWILIO_FROM_NUMBER`. action_type `sms` (new). `src/dri/connectors/twilio_sms.py`. `twilio>=8.0.0` added to pyproject.toml.
-- [x] **#3 Connector: SendGrid** — `SENDGRID_API_KEY + SENDGRID_FROM_EMAIL`. action_type `email` (priority over SMTP when configured). `src/dri/connectors/sendgrid_email.py`. `sendgrid>=6.0.0` added.
-- [x] **#4 Connector: LinkedIn** — `LINKEDIN_ACCESS_TOKEN + LINKEDIN_PERSON_URN`. `social_post` (feed via UGC Posts API) + `linkedin_message` (clair error: Partner API requis). `src/dri/connectors/linkedin.py`. Pas de dep supplémentaire (httpx).
-- [ ] tests/integration/ — full end-to-end pitch test (requires API key)
-- [ ] Next.js frontend (optional, post-MVP)
+### Connectors (all completed 2026-04-27)
+- [x] Slack Bot Token — `src/dri/connectors/slack_bot.py`
+- [x] Twilio SMS — `src/dri/connectors/twilio_sms.py`
+- [x] SendGrid — `src/dri/connectors/sendgrid_email.py`
+- [x] LinkedIn — `src/dri/connectors/linkedin.py`
 
-### Known remaining improvements (future sessions)
-- **Context pruning** — the agentic loop accumulates all tool results in history. For tasks with 15+ tool calls, the context grows large. Implement a rolling window that keeps system prompt + last N turns.
-- **Budget borrowing** — when a child finishes early, unused tokens are lost. Implement a pool where sibling agents can borrow from completed siblings.
-- **Progress streaming** — long CEO loops block the CLI with no feedback beyond the spinner. Add per-tool-call callbacks so the UI shows live tool names as they execute.
-- **Workspace audit log** — `shared/_audit.log` tracking who wrote/deleted what and when. Useful for debugging and for the CEO to understand workspace history.
-- **Integration tests** — `tests/integration/test_company_workflow.py` covering create→chat→task→approve end-to-end (requires API key, mark with `@pytest.mark.integration`).
+### NEXT AGENT PRIORITY: Persistent Agent Identities (Layer 5)
+
+**Goal**: agents are not anonymous instances — they have persistent identities that accumulate
+performance history across tasks. The CEO can see "his team", promote good performers, remove bad ones.
+
+**Implementation plan (no user approval needed — founder validated this direction):**
+
+#### Step 1 — DB model + ORM + repository
+New table `company_agents`:
+```python
+# orm.py
+class CompanyAgentORM(Base):
+    __tablename__ = "company_agents"
+    id: str (UUID PK)
+    company_id: str (FK → persistent_companies.id)
+    title: str          # "Chief Marketing Officer"
+    role: str           # "manager" | "worker"
+    dept_slug: str      # "chief-marketing-officer"
+    task_count: int     # total tasks run
+    success_count: int  # tasks completed successfully
+    token_budget: int   # current budget allocation (can be changed by CEO)
+    created_at: datetime
+    last_active_at: datetime
+    notes: str          # CEO can write notes on this agent ("needs improvement on X")
+    status: str         # "active" | "inactive" (soft-delete)
+```
+New domain model `CompanyAgent` in `models.py`.
+New `CompanyAgentRepository` in `repositories.py`.
+
+#### Step 2 — CompanyExecutor integration
+In `_run_task_force()`, after the task completes:
+- Look up or create a `CompanyAgent` record for each agent title in the task force
+- Increment `task_count`, `success_count` (if DONE), update `last_active_at`
+- Use `company_agent.token_budget` when allocating budget for known agents (instead of default)
+
+#### Step 3 — CLI commands
+```bash
+dri company team list                          # table: title, tasks, success_rate, last_active
+dri company team show "SEO Specialist"         # full profile + notes + memory path
+dri company team note "SEO Specialist" "Needs improvement on keyword density"
+dri company team remove "SEO Specialist"       # mark inactive (soft delete)
+dri company team promote "CMO" --budget 500000 # increase token budget
+```
+
+#### Step 4 — Company Task History (Layer 6)
+At end of `_run_task_force()`, append to `shared/_company_history.md`:
+```markdown
+## 2026-04-29 — [Task summary, 1 line]
+- Team: Task Force Lead → [worker1], [worker2]
+- Outcome: DONE / PARTIAL (N workers failed)
+- Key files produced: [list]
+- Tokens used: N
+```
+Task force lead reads this file at start (already gets company KB — extend to include history).
+
+### Other remaining improvements
+- **Budget borrowing** — unused sibling tokens pooled for reuse.
+- **GitHub connector** — `git push` / `create_pr` / `create_repo` via GitHub API. Lets workers push real code. action_type `github_action`. Requires `GITHUB_TOKEN` in .env.
+- **Integration tests** — `tests/integration/test_company_workflow.py`.
 
 ---
 
 ## Notes for the Next Agent
 
-- **Read the full file before touching anything.**
+- **Read the full file before touching anything. Especially the Memory Architecture section.**
 - The active company for this project is **Momentum** (persistent company in DB).
-  ID: `32a617d7-ecd9-4375-b72c-c10cbb065eba`. Workspace: `workspace/momentum/`.
-  Use `uv run dri company list` to confirm the active company.
+  ID: `31b724fd-4e9c-4d45-be3e-978e2c9ac22b`. Workspace: `workspace/momentum/`.
+  Use `uv run dri company list` to confirm.
 - **LangGraph is NOT used** despite being in the architecture table. `graph.py` is a skeleton.
   Don't add LangGraph code without user approval.
 - `settings.py` singleton: `from dri.config.settings import settings` or `get_settings()`.
@@ -453,9 +577,11 @@ uv run pytest            # run tests
 - All async: `async def` everywhere. No sync/async mixing without `asyncio.to_thread()`.
 - Commit style: `feat: X`, `fix: Y`, `refactor: Z`. Separate logical concerns into separate commits.
 - The `docs/` folder is gitignored (personal notes). Do not commit anything there.
-- Workspace files in `shared/_pending_approvals.json` are the approval queue — do not modify manually.
-- `_wip/` folders are auto-deleted by the framework — never rely on their contents persisting.
-- **Connectors** (`src/dri/connectors/`): self-register at import. Pattern: `ConnectorRegistry.register(MyConnector())` at module bottom + import in `__init__.py`. See `project_connectors.md` in memory.
-- **propose_external_action**: `content` must be the full text of the action — never a file reference. `action_type` must be in `_VALID_TYPES` (validated at runtime). Enum: `email`, `webhook`, `linkedin_message`, `social_post`, `phone_call`, `outreach_message`, `bulk_file_delete`, `other`.
-- **Approval dispatch**: after founder approves (non-bulk_file_delete), `cli.py` calls `ConnectorRegistry.get_for(action_type, action)` → connector executes immediately → result shown in terminal.
-- **Windows UTF-8**: `cli.py` sets `sys.stdout` to UTF-8 + `Console(legacy_windows=False)` to avoid cp1252 crash with Rich spinners.
+- `_wip/` auto-deleted. `_knowledge/` never deleted. `shared/_company_knowledge.md` is institutional memory.
+- **Memory layers in brief**: active context (base.py _MAX_HISTORY_ROUNDS=12) → role files (_knowledge/) → company KB (shared/_company_knowledge.md) → CEO history summary (company_messages role="summary"). See Memory Architecture section for full detail.
+- **Connectors** (`src/dri/connectors/`): self-register at import. Pattern: `ConnectorRegistry.register(MyConnector())` at module bottom + import in `__init__.py`.
+- **propose_external_action**: `content` must be the full text. `action_type` in `_VALID_TYPES`. Enum: `email`, `webhook`, `linkedin_message`, `social_post`, `sms`, `slack_message`, `phone_call`, `outreach_message`, `bulk_file_delete`, `other`.
+- **Approval dispatch**: after founder approves, `cli.py` calls `ConnectorRegistry.get_for(action_type, action)` → executes.
+- **Windows UTF-8**: `cli.py` sets `sys.stdout` to UTF-8 + `Console(legacy_windows=False)`.
+- **Provider**: Gemini via Vertex AI. Workers = gemini-2.5-flash. CEO = gemini-2.5-pro.
+- **Tests**: `uv run pytest tests/unit/ -q` must stay at 87/87 before any commit.
