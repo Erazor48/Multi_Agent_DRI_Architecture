@@ -504,34 +504,19 @@ Layer 6 (ACTIVE): Company Task History
 - [x] SendGrid — `src/dri/connectors/sendgrid_email.py`
 - [x] LinkedIn — `src/dri/connectors/linkedin.py`
 
-### NEXT AGENT PRIORITY: Fix Layer 2 memory (CRITICAL BUG in production)
+### Memory system fixes (completed 2026-04-30)
 
-**Bug**: Layer 2 (role memory — `expertise.md` / `feedback.md`) is silently broken in
-persistent company mode. All task-force agents receive `WorkspacePermission(path="", ...)`.
-`AgentMemory.for_agent()` in `memory.py:55-61` returns `None` whenever `path=""` because
-it requires a non-empty, non-shared dept path. So no agent in production ever reads or
-writes its role memory.
+- [x] **Layer 2 fix** — `memory_dept: str = ""` added to `ContextPacket`. `Spawner.spawn()` computes
+  it from the agent title/parent title (managers → own slug, workers → parent slug). `AgentMemory.for_agent()`
+  uses it as priority over permission scan. `_knowledge_path_str()` and `_load_agent_memory()` updated.
+  5 new tests added → **106/106 passing**.
 
-**Fix**: Add `memory_dept: str = ""` field to `ContextPacket`. Set it in `Spawner.spawn()`
-to `_slug(request.title)` when `root_workspace_access=True`. Pass it through
-`ContextBuilder.build()`. Update `AgentMemory.for_agent()` and `BaseAgent._knowledge_path_str()`
-to use `memory_dept` as the primary source (falling back to permission scan for one-shot mode).
+- [x] **Gap 2 fix** — `CompanyExecutor.chat()` now loads `shared/_company_history.md` and appends it to
+  the CEO system prompt. CEO has full Layer 6 visibility in chat mode.
 
-Detailed step-by-step in `memory/next_task.md`.
-
-**Files to change**: `src/dri/core/memory.py`, `src/dri/orchestration/spawner.py`,
-`src/dri/agents/base.py`, `src/dri/core/memory.py` (ContextPacket + ContextBuilder).
-
-### Gap 2: CEO doesn't see task history in chat mode (important)
-
-`shared/_company_history.md` is injected into task force leads (Layer 6) but NOT into
-the CEO's system prompt in chat mode. Easy fix: load and inject it in `CompanyExecutor.chat()`
-the same way `_run_task_force()` does.
-
-### Gap 3: token_budget not applied at spawn (minor)
-
-`CompanyAgent.token_budget` is stored via `dri company team promote` but the spawner
-never uses it. See `memory/next_task.md` for the wiring plan.
+- [x] **Gap 3 fix** — `Spawner` accepts `budget_overrides: dict[str, int]`. `_run_task_force()` loads
+  active `CompanyAgent` records and passes any `token_budget > 0` as overrides. Custom budgets set via
+  `dri company team promote` are now applied at spawn time.
 
 ### Other remaining improvements
 - **Budget borrowing** — unused sibling tokens pooled for reuse.
@@ -560,4 +545,4 @@ never uses it. See `memory/next_task.md` for the wiring plan.
 - **Approval dispatch**: after founder approves, `cli.py` calls `ConnectorRegistry.get_for(action_type, action)` → executes.
 - **Windows UTF-8**: `cli.py` sets `sys.stdout` to UTF-8 + `Console(legacy_windows=False)`.
 - **Provider**: Gemini via Vertex AI. Workers = gemini-2.5-flash. CEO = gemini-2.5-pro.
-- **Tests**: `uv run pytest tests/unit/ -q` must stay at 87/87 before any commit.
+- **Tests**: `uv run pytest tests/unit/ -q` must stay at 106/106 before any commit.
