@@ -176,7 +176,8 @@ class ManagerAgent(BaseAgent):
         results_text = "\n\n".join(
             r if isinstance(r, str) else f"[Error: {r}]" for r in results
         )
-        return await self._synthesize(task, results_text, synthesis_approach)
+        worker_titles = [req.title for req, _ in spawn_requests]
+        return await self._synthesize(task, results_text, synthesis_approach, worker_titles)
 
     async def _plan_org(self, task: Task) -> dict | None:
         """
@@ -222,13 +223,22 @@ class ManagerAgent(BaseAgent):
         ]
         return await self._agentic_loop(messages, task.id)
 
-    async def _synthesize(self, task: Task, results_text: str, approach: str) -> str:
+    async def _synthesize(
+        self,
+        task: Task,
+        results_text: str,
+        approach: str,
+        worker_titles: list[str] | None = None,
+    ) -> str:
         """
         Synthesize all sub-results into a final report.
 
         Uses an agentic loop so the manager can call file_read on key deliverables
         before writing the synthesis — the result is grounded in actual file content,
         not just file names reported by workers.
+
+        Also writes targeted feedback to each worker's _knowledge/ directory so
+        they accumulate domain expertise over successive tasks.
         """
         dept_files = self._inventory_dept_files()
         shared_files = self._inventory_shared_files()
@@ -239,6 +249,29 @@ class ManagerAgent(BaseAgent):
             for f in all_files:
                 lines.append(f"  - {f}")
             file_inventory = "\n" + "\n".join(lines) + "\n"
+
+        # Build per-worker feedback instructions
+        feedback_note = ""
+        if worker_titles:
+            feedback_lines = [
+                "\n**After completing the synthesis, write feedback for each team member.**",
+                "For each worker below, use `file_write` to create/update their feedback file:",
+            ]
+            has_any = False
+            for title in worker_titles:
+                kpath = self._knowledge_path_str(title)
+                if kpath:
+                    feedback_lines.append(f"- **{title}** → `{kpath}/feedback.md`")
+                    has_any = True
+            if has_any:
+                feedback_lines += [
+                    "Each feedback file must contain:",
+                    "  - What this worker did well in this task",
+                    "  - Concrete improvements for next time (specific, actionable)",
+                    "  - Domain patterns or rules they should remember",
+                    "Read the existing file first (it may have prior feedback to preserve).",
+                ]
+                feedback_note = "\n".join(feedback_lines)
 
         messages = [
             {
@@ -259,6 +292,7 @@ class ManagerAgent(BaseAgent):
                     "concrete next action (retry with narrower scope / reassign remaining work / "
                     "escalate). Do not silently skip failed subtasks.\n\n"
                     "Your manager expects a professional, structured report — not a list of summaries."
+                    + feedback_note
                 ),
             }
         ]

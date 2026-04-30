@@ -1,17 +1,105 @@
 """
-Memory system — three strictly separated layers:
+Memory system — four strictly separated layers:
 
-1. Global store  — reads/writes via DB (AgentRepository, TaskRepository)
+1. Global store      — reads/writes via DB (AgentRepository, TaskRepository)
 2. Context injection — parent builds a ContextPacket for each child at spawn time
-3. Working memory — ephemeral; lives only in the agent's active LLM prompt
+3. Working memory    — ephemeral; lives only in the agent's active LLM prompt
+4. Persistent memory — per-role adaptive knowledge in _knowledge/<slug>/ on disk
 
-This module owns layer 2: constructing ContextPackets.
+This module owns layers 2 and 4.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from dri.core.models import AgentConfig, AgentRole, Skill, Task, WorkspacePermission
+
+
+def _title_slug(title: str) -> str:
+    """Convert an agent title to a filesystem-safe slug (same rule as Spawner._slug)."""
+    return re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+
+
+class AgentMemory:
+    """
+    Persistent adaptive memory for an agent role.
+
+    Stored at: <workspace>/<dept>/_knowledge/<title-slug>/
+    Never touched by _cleanup_wip (which only removes _wip/ dirs).
+
+    Files managed:
+    - expertise.md  — accumulated domain knowledge, patterns, pitfalls
+    - feedback.md   — feedback written by the parent manager after task review
+    """
+
+    _MAX_CHARS = 4000  # soft cap before truncation to protect context budget
+
+    def __init__(self, knowledge_dir: Path) -> None:
+        self._dir = knowledge_dir
+
+    @classmethod
+    def for_agent(
+        cls,
+        workspace_root: str,
+        workspace_permissions: list[WorkspacePermission],
+        title: str,
+    ) -> "AgentMemory | None":
+        """
+        Factory. Returns None for ROOT/task-force agents that have no fixed department.
+        Creates the knowledge directory on first use.
+        """
+        if not workspace_root:
+            return None
+        own_dept: str | None = None
+        for perm in workspace_permissions:
+            if perm.path and perm.path not in ("", "shared/") and perm.can_write:
+                own_dept = perm.path
+                break
+        if not own_dept:
+            return None
+        knowledge_dir = (
+            Path(workspace_root) / own_dept.rstrip("/") / "_knowledge" / _title_slug(title)
+        )
+        knowledge_dir.mkdir(parents=True, exist_ok=True)
+        return cls(knowledge_dir)
+
+    def load(self) -> str:
+        """
+        Load all memory files and return a formatted string for system prompt injection.
+        Returns empty string when no memory has been written yet.
+        """
+        parts: list[str] = []
+
+        feedback = self._read("feedback.md")
+        if feedback:
+            parts.append(f"### Feedback from your manager\n{feedback}")
+
+        expertise = self._read("expertise.md")
+        if expertise:
+            parts.append(f"### Your accumulated expertise\n{expertise}")
+
+        if not parts:
+            return ""
+
+        combined = "\n\n".join(parts)
+        if len(combined) > self._MAX_CHARS:
+            combined = combined[: self._MAX_CHARS] + "\n[... memory truncated for context budget ...]"
+        return combined
+
+    @property
+    def path(self) -> Path:
+        return self._dir
+
+    def _read(self, filename: str) -> str:
+        f = self._dir / filename
+        if not f.exists():
+            return ""
+        try:
+            return f.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
 
 
 @dataclass
@@ -37,6 +125,7 @@ class ContextPacket:
     metadata: dict = field(default_factory=dict)
     workspace_root: str = ""                                         # absolute path to company workspace
     workspace_permissions: list[WorkspacePermission] = field(default_factory=list)
+    agent_memory: str = ""                                           # injected at task start from _knowledge/
 
     def to_system_prompt(self) -> str:
         """
@@ -61,6 +150,14 @@ class ContextPacket:
             lines.append("\n## Constraints\n")
             for c in self.constraints:
                 lines.append(f"- {c}")
+
+        if self.agent_memory:
+            lines.append("\n## Your Persistent Memory\n")
+            lines.append(
+                "This is your accumulated knowledge from previous tasks. "
+                "Apply it proactively — this expertise was earned through real work.\n"
+            )
+            lines.append(self.agent_memory)
 
         if self.prior_results:
             lines.append("\n## Relevant Prior Work\n")

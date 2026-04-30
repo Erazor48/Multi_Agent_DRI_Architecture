@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 import time
 import uuid
@@ -101,6 +102,12 @@ class BaseAgent(ABC):
             await task_repo.set_in_progress(task.id)
 
         try:
+            # Load persistent memory and inject into the system prompt before the task starts.
+            # This runs outside the timeout so file I/O doesn't count against the LLM budget.
+            memory = self._load_agent_memory()
+            if memory:
+                self._ctx.agent_memory = memory
+
             # Elastic timeout: the deadline extends automatically whenever shell_exec
             # runs, so heavy commands (bun install, builds) don't consume the LLM budget.
             # Only pure LLM thinking + lightweight tool calls count toward the base limit.
@@ -207,7 +214,7 @@ class BaseAgent(ABC):
 
     # Keep at most this many tool-call rounds in the active history.
     # Older rounds are pruned to prevent unbounded context growth on long tasks.
-    _MAX_HISTORY_ROUNDS = 8
+    _MAX_HISTORY_ROUNDS = 12
 
     async def _agentic_loop(
         self,
@@ -227,7 +234,7 @@ class BaseAgent(ABC):
         messages = list(initial_messages)
         final_text = ""
 
-        for _ in range(20):  # max 20 tool call rounds
+        for _ in range(30):  # max 30 tool call rounds
             response = await self._call_llm(messages, tools=tool_specs or None)
             final_text = response.text
 
@@ -399,6 +406,37 @@ class BaseAgent(ABC):
         await self._bus.escalate(msg)
 
     # ──────────────────────────────────────────────────────────
+    # Persistent memory
+    # ──────────────────────────────────────────────────────────
+
+    def _load_agent_memory(self) -> str:
+        """
+        Load this role's persistent memory from _knowledge/<slug>/.
+        Returns empty string for ROOT/task-force agents (no fixed dept).
+        """
+        from dri.core.memory import AgentMemory
+        mem = AgentMemory.for_agent(
+            self._ctx.workspace_root,
+            self._ctx.workspace_permissions,
+            self._ctx.title,
+        )
+        return mem.load() if mem is not None else ""
+
+    def _knowledge_path_str(self, title: str | None = None) -> str | None:
+        """
+        Return the workspace-relative path to a role's _knowledge/ directory.
+        Defaults to this agent's own title. Pass a different title for worker paths.
+        """
+        if not self._ctx.workspace_root:
+            return None
+        slug = re.sub(r"[^a-z0-9]+", "-", (title or self._ctx.title).lower()).strip("-")
+        for perm in self._ctx.workspace_permissions:
+            if perm.path and perm.path not in ("", "shared/") and perm.can_write:
+                dept = perm.path.rstrip("/")
+                return f"{dept}/_knowledge/{slug}"
+        return None
+
+    # ──────────────────────────────────────────────────────────
     # Workspace cleanup
     # ──────────────────────────────────────────────────────────
 
@@ -492,6 +530,7 @@ class BaseAgent(ABC):
             return (
                 f.is_file()
                 and "_wip" not in f.parts
+                and "_knowledge" not in f.parts
                 and f.name not in _INFRA_FILES
                 and not any(p in self._INVENTORY_SKIP_DIRS for p in f.parts)
             )
