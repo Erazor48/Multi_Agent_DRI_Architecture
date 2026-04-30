@@ -1194,8 +1194,12 @@ def _infer_company_name(workspace_path: "Path") -> str:  # type: ignore[name-def
     if kb.exists():
         try:
             first_line = kb.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
-            # Strip markdown heading markers
+            # Strip markdown heading markers and common "Company: " / "Nom: " prefixes
             name = first_line.lstrip("#").strip()
+            for prefix in ("Company:", "Nom:", "Name:", "Entreprise:"):
+                if name.lower().startswith(prefix.lower()):
+                    name = name[len(prefix):].strip()
+                    break
             if name:
                 return name
         except (OSError, IndexError):
