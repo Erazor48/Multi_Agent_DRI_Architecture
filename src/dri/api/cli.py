@@ -39,6 +39,28 @@ def _print_banner() -> None:
     console.print()
 
 
+def _render_progress_panel(lines: list[str]) -> Panel:
+    """Render agent tool-call activity as a color-coded live panel."""
+    if not lines:
+        return Panel(
+            Text("  Working...", style="dim"),
+            title="[bold]Team Activity[/bold]", border_style="blue", padding=(0, 1),
+        )
+    text = Text()
+    for line in lines[-10:]:
+        if "shell_exec" in line:
+            text.append(f"  {line}\n", style="yellow")
+        elif "web_search" in line:
+            text.append(f"  {line}\n", style="cyan")
+        elif "file_write" in line or "file_read" in line:
+            text.append(f"  {line}\n", style="green")
+        elif "spawn" in line.lower():
+            text.append(f"  {line}\n", style="bold blue")
+        else:
+            text.append(f"  {line}\n", style="dim")
+    return Panel(text, title="[bold]Team Activity[/bold]", border_style="blue", padding=(0, 1))
+
+
 def _print_result(result: str) -> None:
     console.print()
     console.print(Rule("[bold green]Company Report[/bold green]", style="green"))
@@ -334,11 +356,11 @@ def company_chat(
             if not user_input.strip():
                 continue
 
-            with Progress(SpinnerColumn(), TextColumn("{task.description}"), console=console, transient=True) as p:
-                progress_task = p.add_task("CEO is thinking...", total=None)
-
+            _prog_lines: list[str] = []
+            with Live(_render_progress_panel([]), console=console, refresh_per_second=4, transient=True) as live:
                 def _upd(m: str) -> None:
-                    p.update(progress_task, description=m)
+                    _prog_lines.append(m)
+                    live.update(_render_progress_panel(_prog_lines))
 
                 try:
                     reply = await CompanyExecutor.chat(cid, user_input, on_status=_upd)
@@ -365,15 +387,18 @@ def company_task(
         c = await _resolve_company(company_id)
         if c is None:
             raise ValueError("No company found. Use 'dri company create' or 'dri company use'.")
-        return await CompanyExecutor.task(c.id, task)
+        _prog_lines: list[str] = []
+        with Live(_render_progress_panel([]), console=console, refresh_per_second=4, transient=True) as live:
+            def _upd(m: str) -> None:
+                _prog_lines.append(m)
+                live.update(_render_progress_panel(_prog_lines))
+            return await CompanyExecutor.task(c.id, task, on_status=_upd)
 
-    with Progress(SpinnerColumn(), TextColumn("{task.description}"), TimeElapsedColumn(), console=console) as p:
-        p.add_task("Executing task...", total=None)
-        try:
-            result = asyncio.run(_run())
-        except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
-            raise typer.Exit(1)
+    try:
+        result = asyncio.run(_run())
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
 
     _print_result(result)
 
