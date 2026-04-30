@@ -92,7 +92,9 @@ async def test_full_session_wiring():
     mock_provider = MagicMock()
     mock_provider.call = mock_provider_call
 
-    with patch("dri.llm.factory.create_provider", return_value=mock_provider):
+    # Patch the name where it's used (base.py holds a bound reference after first import)
+    with patch("dri.llm.factory.create_provider", return_value=mock_provider), \
+         patch("dri.agents.base.create_provider", return_value=mock_provider):
         from dri.orchestration.executor import Executor
         executor = Executor()
         status_log: list[str] = []
