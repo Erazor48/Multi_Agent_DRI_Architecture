@@ -33,6 +33,8 @@ _ALLOWED_EXECUTABLES: frozenset[str] = frozenset({
     "git",
     # Image processing (ImageMagick v6 / v7)
     "magick", "convert",
+    # HTTP requests — read-only, no system writes
+    "curl", "wget",
 })
 
 # Git subcommands that destroy working-tree content unconditionally.
@@ -91,6 +93,8 @@ class ShellExecTool(BaseTool):
         "bun run build\n\n"
         "## Other examples\n"
         "ffmpeg -i input.mp4 -vf scale=1280:720 output.mp4\n"
+        "curl -L https://example.com/file.zip -o shared/file.zip\n"
+        "wget https://example.com/image.png -O shared/image.png\n"
         "uv run script.py\n"
         "git add -A && git commit -m 'feat: initial scaffold'\n\n"
         "RULE: always pass --yes / --defaults / --no-interactive to any CLI tool "

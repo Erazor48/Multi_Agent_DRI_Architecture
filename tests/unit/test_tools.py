@@ -117,7 +117,7 @@ async def test_shell_exec_blocked_executable(workspace_dir):
     from dri.tools.base import ToolRegistry
     tool = ToolRegistry.get("shell_exec")
     result = await tool.execute({
-        "command": "curl https://example.com",
+        "command": "rm -rf /",
         "_workspace_root": str(workspace_dir),
     })
     assert not result.success

@@ -886,6 +886,150 @@ def team_promote(
     console.print("[dim]Budget stored — applied to future task forces involving this agent.[/dim]")
 
 
+@company_app.command("recover")
+def company_recover(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Import all orphans without confirmation"),
+) -> None:
+    """Scan workspace/ for company folders not in the DB and offer to re-import them."""
+    from rich.table import Table
+
+    async def _scan():
+        from dri.orchestration.company_executor import CompanyExecutor
+        return await CompanyExecutor.recover_scan()
+
+    orphans = asyncio.run(_scan())
+
+    if not orphans:
+        console.print("[green]No orphan workspaces found — everything is accounted for.[/green]")
+        return
+
+    table = Table(title="Orphan Workspaces", show_lines=True)
+    table.add_column("#", width=3, justify="right")
+    table.add_column("Folder", style="dim")
+    table.add_column("Inferred name", style="bold")
+
+    for i, o in enumerate(orphans, 1):
+        table.add_row(str(i), o.folder_name, o.inferred_name)
+
+    console.print()
+    console.print(table)
+    console.print(
+        "\n[dim]These workspace folders exist on disk but have no matching company record in the DB.[/dim]"
+    )
+    console.print()
+
+    for o in orphans:
+        if not yes:
+            confirmed = typer.confirm(f"Import '{o.folder_name}' as '{o.inferred_name}'?", default=True)
+            if not confirmed:
+                console.print(f"[dim]Skipped {o.folder_name}.[/dim]")
+                continue
+
+        async def _import(folder=o.folder_name, name=o.inferred_name):
+            from dri.orchestration.company_executor import CompanyExecutor
+            return await CompanyExecutor.recover_import(folder, name)
+
+        try:
+            company = asyncio.run(_import())
+            from dri.config.state import set_active_company_id
+            set_active_company_id(company.id)
+            console.print(f"[green]Imported '{company.name}' (ID: {company.id[:8]}...).[/green]")
+        except Exception as e:
+            console.print(f"[red]Failed to import '{o.folder_name}': {e}[/red]")
+
+    console.print()
+    console.print("[dim]Use [bold]dri company list[/bold] to see all companies.[/dim]")
+
+
+@company_app.command("budget")
+def company_budget(
+    company_id: str = typer.Option("", "--id", help="Company ID (uses active/latest if omitted)"),
+) -> None:
+    """Show token budget usage across all sessions for this company."""
+    from rich.table import Table
+
+    async def _run():
+        from dri.storage.database import init_db, get_session
+        from dri.storage.orm import AgentORM, SessionORM
+        from sqlalchemy import select
+
+        c = await _resolve_company(company_id)
+        if c is None:
+            return None, []
+
+        await init_db()
+        async with get_session() as db:
+            result = await db.execute(
+                select(SessionORM)
+                .where(SessionORM.company_name == c.name)
+                .order_by(SessionORM.created_at.desc())
+                .limit(5)
+            )
+            sessions = list(result.scalars())
+
+            session_data = []
+            for s in sessions:
+                agent_result = await db.execute(
+                    select(AgentORM).where(AgentORM.session_id == s.id)
+                )
+                agents = list(agent_result.scalars())
+                session_data.append((s, agents))
+
+        return c, session_data
+
+    company, session_data = asyncio.run(_run())
+
+    if company is None:
+        console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
+        raise typer.Exit(1)
+    if not session_data:
+        console.print(f"[dim]No session data found for {company.name}. Run a task to populate.[/dim]")
+        return
+
+    console.print()
+    for session, agents in session_data:
+        table = Table(
+            title=f"Session {session.id[:8]}...  [{session.created_at.strftime('%Y-%m-%d %H:%M')}]",
+            show_lines=True,
+        )
+        table.add_column("Agent", style="bold")
+        table.add_column("Allocated", justify="right")
+        table.add_column("Used", justify="right")
+        table.add_column("Remaining", justify="right")
+        table.add_column("%", justify="right")
+
+        for a in sorted(agents, key=lambda x: x.budget_used, reverse=True):
+            if a.budget_total == 0:
+                continue
+            remaining = a.budget_total - a.budget_used
+            pct = a.budget_used / a.budget_total
+            pct_color = "red" if pct > 0.9 else ("yellow" if pct > 0.7 else "green")
+            table.add_row(
+                a.title,
+                f"{a.budget_total:,}",
+                f"{a.budget_used:,}",
+                f"{remaining:,}",
+                f"[{pct_color}]{pct:.0%}[/{pct_color}]",
+            )
+
+        # Total row
+        total_alloc = sum(a.budget_total for a in agents)
+        total_used = sum(a.budget_used for a in agents)
+        if total_alloc > 0:
+            total_pct = total_used / total_alloc
+            table.add_section()
+            table.add_row(
+                "[bold]TOTAL[/bold]",
+                f"[bold]{total_alloc:,}[/bold]",
+                f"[bold]{total_used:,}[/bold]",
+                f"[bold]{total_alloc - total_used:,}[/bold]",
+                f"[bold]{total_pct:.0%}[/bold]",
+            )
+
+        console.print(table)
+        console.print()
+
+
 @company_app.command("decommission")
 def company_decommission(
     title: str = typer.Argument(..., help="Exact department title to decommission (e.g. 'Chief Marketing Officer')"),

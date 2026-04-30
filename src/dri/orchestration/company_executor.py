@@ -132,6 +132,51 @@ _CEO_READ_TOOLS = [
 class CompanyExecutor:
 
     @staticmethod
+    async def recover_scan() -> "list[_OrphanCandidate]":
+        """Scan the workspace directory and return orphan company candidates."""
+        return await _scan_orphan_workspaces()
+
+    @staticmethod
+    async def recover_import(folder_name: str, company_name: str) -> PersistentCompany:
+        """
+        Import an orphan workspace folder as a new PersistentCompany in the DB.
+        Reads KB/history files to reconstruct a minimal pitch and org_structure.
+        """
+        workspace_path = settings.workspace_dir / folder_name
+        shared = workspace_path / "shared"
+
+        vision = ""
+        kb = shared / "_company_knowledge.md"
+        if kb.exists():
+            try:
+                content = kb.read_text(encoding="utf-8", errors="ignore")
+                lines = [l for l in content.splitlines() if not l.startswith("#") and l.strip()]
+                vision = " ".join(lines)[:300]
+            except OSError:
+                pass
+        if not vision:
+            vision = f"Recovered workspace: {folder_name}"
+
+        org_structure: list[dict[str, str]] = []
+        reserved = {"shared", "ceo"}
+        for entry in sorted(workspace_path.iterdir()):
+            if entry.is_dir() and entry.name not in reserved and not entry.name.startswith("_"):
+                title = re.sub(r"[-_]+", " ", entry.name).title()
+                org_structure.append({"title": title, "mission": ""})
+
+        company = PersistentCompany(
+            name=company_name,
+            vision=vision,
+            pitch=vision,
+            org_structure=org_structure,
+        )
+        await init_db()
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            await repo.create(company)
+        return company
+
+    @staticmethod
     async def create(pitch: str, on_status: Any = None) -> PersistentCompany:
         """Design a company from a pitch and persist it. Does not spawn agents."""
         await init_db()
@@ -1085,3 +1130,91 @@ async def _run_task_force(
         await session_repo.complete(session.id)
 
     return report.result or "[Task force produced no result]"
+
+
+class _OrphanCandidate:
+    """A workspace folder that has no corresponding DB record."""
+    def __init__(self, folder_name: str, inferred_name: str, workspace_path: str) -> None:
+        self.folder_name = folder_name
+        self.inferred_name = inferred_name
+        self.workspace_path = workspace_path
+
+
+async def _scan_orphan_workspaces() -> list[_OrphanCandidate]:
+    """
+    Find workspace directories that have no matching PersistentCompany in DB.
+    A valid company workspace is a folder that contains a 'shared/' subdirectory.
+    """
+    from pathlib import Path as _Path
+    import re as _re
+
+    workspace_root = settings.workspace_dir
+    if not workspace_root.exists():
+        return []
+
+    await init_db()
+
+    # Collect all known company slugs from DB
+    async with get_session() as db:
+        repo = PersistentCompanyRepository(db)
+        companies = await repo.list_active()
+
+    known_slugs: set[str] = set()
+    for c in companies:
+        known_slugs.add(_company_slug(c.name))
+
+    orphans: list[_OrphanCandidate] = []
+    for entry in sorted(workspace_root.iterdir()):
+        if not entry.is_dir():
+            continue
+        if not (entry / "shared").is_dir():
+            continue  # Not a company workspace
+        if entry.name in known_slugs:
+            continue  # Already in DB
+
+        # Try to infer a human-readable name from the KB or history files
+        inferred = _infer_company_name(entry)
+        orphans.append(_OrphanCandidate(
+            folder_name=entry.name,
+            inferred_name=inferred,
+            workspace_path=str(entry),
+        ))
+
+    return orphans
+
+
+def _infer_company_name(workspace_path: "Path") -> str:  # type: ignore[name-defined]
+    """Try to extract the company name from its workspace files, falling back to folder name."""
+    from pathlib import Path as _Path
+
+    path = _Path(workspace_path)
+
+    # Try _company_knowledge.md first (most reliable)
+    kb = path / "shared" / "_company_knowledge.md"
+    if kb.exists():
+        try:
+            first_line = kb.read_text(encoding="utf-8", errors="ignore").splitlines()[0]
+            # Strip markdown heading markers
+            name = first_line.lstrip("#").strip()
+            if name:
+                return name
+        except (OSError, IndexError):
+            pass
+
+    # Try _company_history.md
+    hist = path / "shared" / "_company_history.md"
+    if hist.exists():
+        try:
+            for line in hist.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    # First non-empty non-header line often has the company name
+                    return line[:60]
+        except OSError:
+            pass
+
+    # Fall back to humanizing the folder slug
+    import re as _re
+    return _re.sub(r"[-_]+", " ", path.name).title()
+
+

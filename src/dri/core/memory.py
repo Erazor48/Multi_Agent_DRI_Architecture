@@ -145,7 +145,9 @@ class ContextPacket:
         """
         Render this context packet into the agent's system prompt.
         This is the only information the agent has about its existence.
+        Workers get a condensed version to save token budget for actual work.
         """
+        is_worker = self.role == AgentRole.WORKER
         lines: list[str] = []
 
         lines.append(f"# {self.title}")
@@ -156,11 +158,13 @@ class ContextPacket:
 
         if self.company_kb:
             lines.append("\n## Company Knowledge Base\n")
-            lines.append(self.company_kb)
+            kb = self.company_kb[:1500] + "\n[...truncated]" if is_worker and len(self.company_kb) > 1500 else self.company_kb
+            lines.append(kb)
 
         if self.company_history_snippet:
             lines.append("\n## Company Task History (recent)\n")
-            lines.append(self.company_history_snippet)
+            hist = self.company_history_snippet[:1000] + "\n[...truncated]" if is_worker and len(self.company_history_snippet) > 1000 else self.company_history_snippet
+            lines.append(hist)
 
         if self.skills:
             lines.append("\n## Your Skills\n")
@@ -216,51 +220,63 @@ class ContextPacket:
             f"- Your token budget for this task is {self.budget_tokens:,} tokens."
         )
 
-        lines.append("\n## Integrity Rules — Mandatory, No Exceptions\n")
-        lines.append(
-            "- **NEVER fabricate data, outcomes, responses, or feedback.** "
-            "If you lack a tool or capability to perform an action, do NOT invent what the result would be.\n"
-            "- **For any action requiring real-world interaction** (sending emails, messages, posts, calls, outreach): "
-            "use the `propose_external_action` tool. This logs the proposed action for founder approval. "
-            "Do NOT proceed as if the action was executed — report upward that it is pending.\n"
-            "- **When you don't know something**, say so. "
-            "Use `web_search` to find real data, or escalate. An honest 'I could not find this' "
-            "is always better than an invented answer.\n"
-            "- **Mark hypotheticals explicitly.** Any example, template, or illustrative content "
-            "that is not real data must be labeled `[EXAMPLE — NOT REAL DATA]`.\n"
-            "- **Verify before citing.** Before finalizing your report, call `file_list` on your "
-            "department folder to confirm which files actually exist on disk. "
-            "NEVER mention a file in your report unless you have confirmed it exists. "
-            "A file you intended to write but did not is a failure, not a result.\n"
-            "- **Cite every file you produce.** In your report to your manager, list each file "
-            "you created or modified with its exact workspace-relative path "
-            "(e.g. `shared/report.md`, `marketing/strategy.md`). "
-            "If you produced nothing, say so explicitly — do not invent deliverables."
-        )
+        if is_worker:
+            lines.append("\n## Rules — Mandatory\n")
+            lines.append(
+                "- **Never fabricate** data or outcomes. If you can't do it, say so.\n"
+                "- **Real-world actions** (email, message, post): use `propose_external_action`.\n"
+                "- **Verify before citing**: call `file_list` to confirm files exist before reporting them.\n"
+                "- **Cite every file** you produce with its exact workspace-relative path.\n"
+                "- `_wip/` → drafts only. Dept root + `shared/` → final deliverables only.\n"
+                "- Delete your `_wip/` files with `file_delete` before reporting done.\n"
+                "- Never delete files in another dept's folder."
+            )
+        else:
+            lines.append("\n## Integrity Rules — Mandatory, No Exceptions\n")
+            lines.append(
+                "- **NEVER fabricate data, outcomes, responses, or feedback.** "
+                "If you lack a tool or capability to perform an action, do NOT invent what the result would be.\n"
+                "- **For any action requiring real-world interaction** (sending emails, messages, posts, calls, outreach): "
+                "use the `propose_external_action` tool. This logs the proposed action for founder approval. "
+                "Do NOT proceed as if the action was executed — report upward that it is pending.\n"
+                "- **When you don't know something**, say so. "
+                "Use `web_search` to find real data, or escalate. An honest 'I could not find this' "
+                "is always better than an invented answer.\n"
+                "- **Mark hypotheticals explicitly.** Any example, template, or illustrative content "
+                "that is not real data must be labeled `[EXAMPLE — NOT REAL DATA]`.\n"
+                "- **Verify before citing.** Before finalizing your report, call `file_list` on your "
+                "department folder to confirm which files actually exist on disk. "
+                "NEVER mention a file in your report unless you have confirmed it exists. "
+                "A file you intended to write but did not is a failure, not a result.\n"
+                "- **Cite every file you produce.** In your report to your manager, list each file "
+                "you created or modified with its exact workspace-relative path "
+                "(e.g. `shared/report.md`, `marketing/strategy.md`). "
+                "If you produced nothing, say so explicitly — do not invent deliverables."
+            )
 
-        lines.append("\n## File Lifecycle Rules\n")
-        lines.append(
-            "Files in the workspace are the company's source of truth. Keep them clean and current.\n\n"
-            "**File zones — mandatory convention:**\n"
-            "- `<your-dept>/_wip/` → ephemeral working files: drafts, notes, temp outputs. "
-            "Save intermediate work here during execution.\n"
-            "- `<your-dept>/` (root) and `shared/` → deliverables: final outputs that must "
-            "persist after your task ends. Only save here when the work is complete.\n\n"
-            "**Before reporting your task as complete:**\n"
-            "- Delete everything inside your `_wip/` subfolder using `file_delete`.\n"
-            "- Keep only final deliverables in your dept root and in `shared/`.\n\n"
-            "**When to delete a deliverable:**\n"
-            "- It has been superseded by a newer, complete version.\n"
-            "- Its content contradicts the current company direction and no longer applies.\n\n"
-            "**When NOT to delete:**\n"
-            "- Files in another department's folder (you can read them, not delete them).\n"
-            "- A file that is the only record of important context — update it instead.\n\n"
-            "**How to delete properly:**\n"
-            "- Use `file_delete` — never tell others to 'ignore' a file. Ignored files are clutter.\n"
-            "- If a file is partially still relevant, overwrite it with `file_write`.\n"
-            "- In your report, cite every file deleted: path + reason "
-            "(e.g. `deleted shared/old_plan.md — superseded by shared/plan_v2.md`)."
-        )
+            lines.append("\n## File Lifecycle Rules\n")
+            lines.append(
+                "Files in the workspace are the company's source of truth. Keep them clean and current.\n\n"
+                "**File zones — mandatory convention:**\n"
+                "- `<your-dept>/_wip/` → ephemeral working files: drafts, notes, temp outputs. "
+                "Save intermediate work here during execution.\n"
+                "- `<your-dept>/` (root) and `shared/` → deliverables: final outputs that must "
+                "persist after your task ends. Only save here when the work is complete.\n\n"
+                "**Before reporting your task as complete:**\n"
+                "- Delete everything inside your `_wip/` subfolder using `file_delete`.\n"
+                "- Keep only final deliverables in your dept root and in `shared/`.\n\n"
+                "**When to delete a deliverable:**\n"
+                "- It has been superseded by a newer, complete version.\n"
+                "- Its content contradicts the current company direction and no longer applies.\n\n"
+                "**When NOT to delete:**\n"
+                "- Files in another department's folder (you can read them, not delete them).\n"
+                "- A file that is the only record of important context — update it instead.\n\n"
+                "**How to delete properly:**\n"
+                "- Use `file_delete` — never tell others to 'ignore' a file. Ignored files are clutter.\n"
+                "- If a file is partially still relevant, overwrite it with `file_write`.\n"
+                "- In your report, cite every file deleted: path + reason "
+                "(e.g. `deleted shared/old_plan.md — superseded by shared/plan_v2.md`)."
+            )
 
         return "\n".join(lines)
 
