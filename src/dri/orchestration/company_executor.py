@@ -19,6 +19,13 @@ from dri.storage.database import get_session, init_db
 from dri.storage.repositories import CompanyMessageRepository, PersistentCompanyRepository
 
 
+# ── Conversation summarization thresholds ────────────────────────────────
+# When regular (non-summary) message count exceeds this, compress old messages.
+_SUMMARY_THRESHOLD = 40
+# Most recent messages kept verbatim after each compression round.
+_SUMMARY_KEEP_VERBATIM = 14
+
+
 def _company_slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
@@ -208,6 +215,20 @@ class CompanyExecutor:
 
         workspace_root = _company_workspace(company.name)
 
+        # Compress history if it's grown too long.
+        # _notify suppressed here — summarization is transparent to the user.
+        provider_for_summary = create_provider()
+        did_summarize = await _maybe_summarize_ceo_history(
+            company_id=company_id,
+            history=history,
+            provider=provider_for_summary,
+            company=company,
+        )
+        if did_summarize:
+            async with get_session() as db:
+                msg_repo2 = CompanyMessageRepository(db)
+                history = await msg_repo2.list_by_company(company_id)
+
         dept_list = "\n".join(
             f"  - {d['title']}: {d.get('mission', '')}"
             for d in company.org_structure
@@ -272,6 +293,10 @@ class CompanyExecutor:
             "'bun create next-app@latest'), install deps ('bun install'), run builds "
             "('bun run build'), and process media (ffmpeg). NEVER ask the founder to run "
             "terminal commands manually when a worker with shell_exec can do it.\n"
+            "- **Next.js / Turbopack quality gate**: your workers MUST run `bun run build` "
+            "after every frontend change and fix ALL errors before reporting done. "
+            "A project with a failing build is NOT done — re-spawn with stricter instructions. "
+            "Build output from Turbopack includes exact error locations; workers must read and fix every one.\n"
             "- When a team delivers a runnable project, always surface the launch commands "
             "in your response using a code block — e.g. `cd <path> && bun run dev`. "
             "The founder must be able to copy-paste a single command to start the project.\n\n"
@@ -296,17 +321,22 @@ class CompanyExecutor:
             "- Cite every file with its exact workspace-relative path "
             "(e.g. `shared/report.md`, `croissance-strat-gie/targets.md`).\n\n"
 
+            "## Company knowledge base — `shared/_company_knowledge.md`\n"
+            "This file is the company's institutional memory. Every task force reads it.\n"
+            "After a significant decision, strategic pivot, or completed milestone, "
+            "spawn a minimal one-worker team to update it with:\n"
+            "  ## Strategic Decisions — key directional choices\n"
+            "  ## Brand & Voice — positioning, tone, target audience\n"
+            "  ## Technical Stack — tools, frameworks, infrastructure decisions\n"
+            "  ## Completed Milestones — what's been shipped\n"
+            "  ## Lessons Learned — what worked, what to avoid\n"
+            "You can read the current version with `file_read` on `shared/_company_knowledge.md`.\n\n"
+
             "Always speak as the CEO: direct, honest, concise. "
             "A short honest failure report is better than a long fabricated success."
         )
 
-        llm_messages: list[dict[str, Any]] = []
-        for msg in history[-30:]:
-            llm_messages.append({
-                "role": "user" if msg.role == "user" else "assistant",
-                "content": msg.content,
-            })
-        llm_messages.append({"role": "user", "content": user_message})
+        llm_messages = _build_ceo_messages(history, user_message)
 
         # Save user message
         async with get_session() as db:
@@ -357,6 +387,101 @@ class CompanyExecutor:
             workspace_root=workspace_root,
             on_status=on_status or (lambda _: None),
         )
+
+
+async def _maybe_summarize_ceo_history(
+    *,
+    company_id: str,
+    history: list[Any],
+    provider: Any,
+    company: Any,
+) -> bool:
+    """
+    If regular message count exceeds _SUMMARY_THRESHOLD, compress the oldest messages
+    into a summary record. Deletes compressed messages from DB and inserts one summary.
+    Returns True if summarization happened (caller should reload history).
+    """
+    summaries = [m for m in history if m.role == "summary"]
+    regular = [m for m in history if m.role != "summary"]
+
+    if len(regular) <= _SUMMARY_THRESHOLD:
+        return False
+
+    to_summarize = regular[:-_SUMMARY_KEEP_VERBATIM]
+    existing_summary = summaries[0].content if summaries else ""
+
+    conversation_text = "\n\n".join(
+        f"{'[FOUNDER]' if m.role == 'user' else '[CEO]'}: {m.content[:700]}"
+        for m in to_summarize
+    )
+
+    prompt = (
+        (f"## Prior summary to update\n{existing_summary}\n\n" if existing_summary else "")
+        + f"## Conversation to incorporate — company: {company.name}\n{conversation_text}\n\n"
+        "Produce a structured summary with these exact sections:\n\n"
+        "## Strategic Decisions\nKey decisions about direction, positioning, products.\n\n"
+        "## Completed Work\nTasks completed, with workspace file paths where relevant.\n\n"
+        "## Founder Preferences\nInstructions, preferences, or constraints the founder expressed.\n\n"
+        "## Open Issues & Next Steps\nUnresolved problems, pending tasks, known blockers.\n\n"
+        "Be specific. Include file paths. Max 300 lines."
+    )
+
+    response = await provider.call(
+        system=(
+            "You compress AI agent conversation histories into dense, accurate summaries "
+            "that preserve all decision-relevant context."
+        ),
+        messages=[{"role": "user", "content": prompt}],
+        tools=None,
+        model=settings.default_model,
+        max_tokens=4096,
+    )
+
+    summary_text = response.text or "(summary unavailable)"
+    ids_to_delete = [m.id for m in to_summarize + summaries]
+
+    async with get_session() as db:
+        msg_repo = CompanyMessageRepository(db)
+        await msg_repo.replace_with_summary(company_id, ids_to_delete, summary_text)
+
+    return True
+
+
+def _build_ceo_messages(
+    history: list[Any],
+    current_user_message: str,
+) -> list[dict[str, Any]]:
+    """
+    Build the LLM message list from history.
+
+    Summary records are injected as a context prefix on the first user message.
+    Regular messages are taken verbatim (last _SUMMARY_KEEP_VERBATIM).
+    Always ends with the current user message.
+    """
+    summaries = [m for m in history if m.role == "summary"]
+    regular = [m for m in history if m.role != "summary"]
+
+    # Take only recent messages to stay within context budget
+    recent = regular[-_SUMMARY_KEEP_VERBATIM:]
+
+    # Drop any leading assistant messages so the sequence starts with "user"
+    while recent and recent[0].role != "user":
+        recent = recent[1:]
+
+    llm_messages: list[dict[str, Any]] = []
+    for i, msg in enumerate(recent):
+        role = "user" if msg.role == "user" else "assistant"
+        content = msg.content
+        # Prepend the summary to the first user message in the window
+        if i == 0 and summaries:
+            content = (
+                "[Summary of prior conversation — treat as established context]\n\n"
+                f"{summaries[0].content}\n\n---\n\n{content}"
+            )
+        llm_messages.append({"role": role, "content": content})
+
+    llm_messages.append({"role": "user", "content": current_user_message})
+    return llm_messages
 
 
 async def _ceo_loop(
@@ -468,7 +593,7 @@ def _workspace_snapshot(workspace_root: str) -> str:
     if not ws.exists():
         return "**Workspace snapshot:** (workspace not found)"
     _INFRA = {"_audit.log", "_pending_approvals.json"}
-    _SKIP_DIRS = {"node_modules", ".next", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".cache"}
+    _SKIP_DIRS = {"node_modules", ".next", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".cache", "_knowledge"}
     files = sorted(
         f.relative_to(ws).as_posix()
         for f in ws.rglob("*")
@@ -537,6 +662,18 @@ async def _run_task_force(
     ]
     official_folders_str = "\n".join(f"  - {f}" for f in official_folders)
 
+    # Load company knowledge base if it exists — injected into every task force context.
+    from pathlib import Path as _Path
+    _kb_path = _Path(workspace_root) / "shared" / "_company_knowledge.md"
+    _company_kb = ""
+    if _kb_path.exists():
+        try:
+            _kb_content = _kb_path.read_text(encoding="utf-8").strip()
+            if _kb_content:
+                _company_kb = f"\n\n## Company Knowledge Base\n{_kb_content[:3000]}"
+        except OSError:
+            pass
+
     base_tools = ["file_list", "file_read", "file_write", "file_delete", "propose_external_action", "shell_exec"]
     if settings.has_web_search:
         base_tools.insert(0, "web_search")
@@ -547,12 +684,20 @@ async def _run_task_force(
         allowed_tools=base_tools,
         mission=(
             f"You are a task force lead for **{company.name}**.\n"
-            f"Company vision: {company.vision}\n\n"
-            f"Official workspace folders:\n{official_folders_str}\n"
+            f"Company vision: {company.vision}\n"
+            + _company_kb
+            + f"\n\nOfficial workspace folders:\n{official_folders_str}\n"
             "Any folder NOT in this list is a rogue artifact and must be deleted during cleanup.\n\n"
             f"Your task: {task_description}\n\n"
-            "Before designing your team, use `file_list` on the workspace root to check "
-            "what exists — identify rogue folders and build on existing work, do not redo it.\n\n"
+            "Before designing your team:\n"
+            "1. Use `file_list` on the workspace root to check what exists — identify rogue folders "
+            "and build on existing work, do not redo it.\n"
+            "2. If the task involves a Next.js project, read its AGENTS.md first with `file_read`. "
+            "For example, the Momentum Next.js guide is at "
+            "'marketing-produit-et-aide-la-vente/momentum-nextjs/AGENTS.md'. "
+            "That file contains critical patterns (Button API, Tailwind v4, Framer Motion, "
+            "design system, content integrity rules). Workers must follow it exactly. "
+            "Pass the relevant sections as context when you assign their missions.\n\n"
             "## Tool allocation rules for your team\n"
             + (
                 "- You have `web_search` — use it before making any factual claims about the market, "
@@ -566,6 +711,22 @@ async def _run_task_force(
             "build ('bun run build'), process media with ffmpeg, or run any script. "
             "Always use shell_exec for project scaffolding — NEVER write package.json / node_modules "
             "by hand. cwd is relative to workspace root (e.g. 'croissance-strat-gie/my-site').\n"
+            "- **Next.js / Turbopack error handling — mandatory for all frontend workers**: "
+            "After writing any Next.js code, ALWAYS run `bun run build` (not just `bun run dev`). "
+            "Build output contains all TypeScript and Turbopack errors with exact file paths and line numbers. "
+            "Read every error, fix each file with file_write, then run build again — repeat until build exits 0. "
+            "NEVER report a Next.js project as done if `bun run build` has not exited successfully. "
+            "Common issues to watch for: "
+            "(1) This project uses shadcn with @base-ui/react — Button does NOT support 'asChild'. "
+            "Use 'buttonVariants' + 'Link' pattern: "
+            "import { buttonVariants } from '@/components/ui/button'; "
+            "<Link href='...' className={cn(buttonVariants({ variant, size }), 'extra-classes'}>text</Link>. "
+            "(2) JSX apostrophes: use actual ' or &apos; — never HTML &apos; entities inside JSX text. "
+            "(3) Tailwind v4: globals.css uses '@import tailwindcss' — do NOT change or add @tailwind directives. "
+            "Use only shadcn CSS variables: bg-background, bg-card, bg-muted, bg-primary, "
+            "text-foreground, text-muted-foreground, border-border. "
+            "(4) Add shadcn components via CLI only: `bunx shadcn@latest add <component> -y`. "
+            "Never copy-paste component code by hand.\n"
             "- **Launch instructions — mandatory**: whenever a worker delivers a runnable project "
             "(Next.js, React, Vite, Python app, etc.), the worker's report MUST end with a "
             "'## How to run' section containing the exact shell commands to start it locally "

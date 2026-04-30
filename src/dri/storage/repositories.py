@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dri.core.models import (
@@ -406,6 +406,30 @@ class CompanyMessageRepository:
             )
             for row in result.scalars()
         ]
+
+    async def replace_with_summary(
+        self,
+        company_id: str,
+        ids_to_delete: list[str],
+        summary_content: str,
+    ) -> None:
+        """
+        Delete the specified messages and insert one summary record in their place.
+        Called by the conversation summarizer to compress old history.
+        role="summary" is a reserved internal role — not user/ceo.
+        """
+        if ids_to_delete:
+            await self._db.execute(
+                delete(CompanyMessageORM).where(CompanyMessageORM.id.in_(ids_to_delete))
+            )
+        summary = CompanyMessage(company_id=company_id, role="summary", content=summary_content)
+        self._db.add(CompanyMessageORM(
+            id=summary.id,
+            company_id=summary.company_id,
+            role=summary.role,
+            content=summary.content,
+            created_at=summary.created_at,
+        ))
 
 
 # ──────────────────────────────────────────────────────────────
