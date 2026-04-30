@@ -170,6 +170,14 @@ class Spawner:
         # ── Build context packet ──────────────────────────────
         config.metadata["parent_id"] = request.parent_id or ""
         ws_perms = self._workspace_permissions(request.role, request.title, parent_title)
+        # memory_dept: the dept folder under which _knowledge/<slug>/ lives.
+        # Managers own their own dept; workers share their parent manager's dept.
+        # This must be explicit because task-force agents receive path="" perms
+        # which AgentMemory.for_agent() cannot use to derive the dept.
+        if request.role in (AgentRole.MANAGER, AgentRole.ROOT):
+            memory_dept = self._slug(request.title)
+        else:
+            memory_dept = self._slug(parent_title)
         context = ContextBuilder.build(
             child_config=config,
             parent_title=parent_title,
@@ -179,6 +187,7 @@ class Spawner:
             constraints=constraints,
             workspace_root=self._workspace_root,
             workspace_permissions=ws_perms,
+            memory_dept=memory_dept,
         )
 
         # ── Instantiate correct class ─────────────────────────

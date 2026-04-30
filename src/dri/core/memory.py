@@ -45,22 +45,30 @@ class AgentMemory:
         workspace_root: str,
         workspace_permissions: list[WorkspacePermission],
         title: str,
+        memory_dept: str = "",
     ) -> "AgentMemory | None":
         """
-        Factory. Returns None for ROOT/task-force agents that have no fixed department.
+        Factory. Returns None when no dept can be determined.
         Creates the knowledge directory on first use.
+
+        memory_dept: explicit dept slug (set by Spawner for task-force agents that
+        receive a blanket path="" permission and cannot derive dept from permissions).
+        Falls back to scanning workspace_permissions for one-shot mode compatibility.
         """
         if not workspace_root:
             return None
-        own_dept: str | None = None
-        for perm in workspace_permissions:
-            if perm.path and perm.path not in ("", "shared/") and perm.can_write:
-                own_dept = perm.path
-                break
+        # Priority 1: explicit override (task-force mode)
+        own_dept = memory_dept.rstrip("/") if memory_dept else None
+        # Priority 2: derive from specific dept permission (one-shot mode)
+        if not own_dept:
+            for perm in workspace_permissions:
+                if perm.path and perm.path not in ("", "shared/") and perm.can_write:
+                    own_dept = perm.path.rstrip("/")
+                    break
         if not own_dept:
             return None
         knowledge_dir = (
-            Path(workspace_root) / own_dept.rstrip("/") / "_knowledge" / _title_slug(title)
+            Path(workspace_root) / own_dept / "_knowledge" / _title_slug(title)
         )
         knowledge_dir.mkdir(parents=True, exist_ok=True)
         return cls(knowledge_dir)
@@ -125,6 +133,7 @@ class ContextPacket:
     metadata: dict = field(default_factory=dict)
     workspace_root: str = ""                                         # absolute path to company workspace
     workspace_permissions: list[WorkspacePermission] = field(default_factory=list)
+    memory_dept: str = ""                                            # dept slug for Layer 2 memory (set by Spawner)
     agent_memory: str = ""                                           # injected at task start from _knowledge/
 
     def to_system_prompt(self) -> str:
@@ -260,6 +269,7 @@ class ContextBuilder:
         constraints: list[str] | None = None,
         workspace_root: str = "",
         workspace_permissions: list[WorkspacePermission] | None = None,
+        memory_dept: str = "",
     ) -> ContextPacket:
         return ContextPacket(
             agent_id=child_config.id,
@@ -278,6 +288,7 @@ class ContextBuilder:
             metadata=dict(child_config.metadata),
             workspace_root=workspace_root,
             workspace_permissions=workspace_permissions or [],
+            memory_dept=memory_dept,
         )
 
     @staticmethod

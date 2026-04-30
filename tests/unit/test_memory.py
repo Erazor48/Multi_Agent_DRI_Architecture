@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from dri.core.memory import ContextBuilder, ContextPacket
-from dri.core.models import AgentConfig, AgentRole, BudgetAllocation, Skill, Task, TaskStatus
+from dri.core.memory import AgentMemory, ContextBuilder, ContextPacket
+from dri.core.models import AgentConfig, AgentRole, BudgetAllocation, Skill, Task, TaskStatus, WorkspacePermission
 
 
 @pytest.fixture
@@ -87,3 +87,73 @@ def test_summarize_task_result_no_result():
     )
     summary = ContextBuilder.summarize_task_result(task)
     assert "no result" in summary.lower()
+
+
+# ── Layer 2 memory_dept fix — task-force mode ──────────────────────────────
+
+
+def test_agent_memory_for_agent_with_explicit_memory_dept(tmp_path):
+    """Task-force agents receive path='' perms. memory_dept must override perm scan."""
+    full_access_perm = WorkspacePermission(path="", can_read=True, can_write=True, can_delete=True)
+    mem = AgentMemory.for_agent(
+        workspace_root=str(tmp_path),
+        workspace_permissions=[full_access_perm],
+        title="SEO Specialist",
+        memory_dept="chief-marketing-officer",
+    )
+    assert mem is not None
+    expected = tmp_path / "chief-marketing-officer" / "_knowledge" / "seo-specialist"
+    assert mem.path == expected
+    assert expected.exists()
+
+
+def test_agent_memory_for_agent_fallback_to_permissions(tmp_path):
+    """One-shot mode: no memory_dept, specific dept perm is used as fallback."""
+    dept_perm = WorkspacePermission(
+        path="chief-marketing-officer/", can_read=True, can_write=True, can_delete=True
+    )
+    mem = AgentMemory.for_agent(
+        workspace_root=str(tmp_path),
+        workspace_permissions=[dept_perm],
+        title="SEO Specialist",
+    )
+    assert mem is not None
+    expected = tmp_path / "chief-marketing-officer" / "_knowledge" / "seo-specialist"
+    assert mem.path == expected
+
+
+def test_agent_memory_for_agent_no_dept_returns_none(tmp_path):
+    """No memory_dept and only empty/shared perms → returns None (unchanged behaviour)."""
+    perms = [
+        WorkspacePermission(path="", can_read=True, can_write=True, can_delete=True),
+        WorkspacePermission(path="shared/", can_read=True, can_write=True, can_delete=True),
+    ]
+    mem = AgentMemory.for_agent(
+        workspace_root=str(tmp_path),
+        workspace_permissions=perms,
+        title="SEO Specialist",
+    )
+    assert mem is None
+
+
+def test_context_builder_propagates_memory_dept(sample_config):
+    """ContextBuilder.build() must forward memory_dept to the ContextPacket."""
+    packet = ContextBuilder.build(
+        child_config=sample_config,
+        parent_title="CMO",
+        company_name="X",
+        company_pitch="Y",
+        memory_dept="chief-marketing-officer",
+    )
+    assert packet.memory_dept == "chief-marketing-officer"
+
+
+def test_context_builder_memory_dept_defaults_to_empty(sample_config):
+    """Omitting memory_dept keeps the field empty (backwards compatible)."""
+    packet = ContextBuilder.build(
+        child_config=sample_config,
+        parent_title="CMO",
+        company_name="X",
+        company_pitch="Y",
+    )
+    assert packet.memory_dept == ""

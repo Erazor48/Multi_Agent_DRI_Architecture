@@ -412,13 +412,14 @@ class BaseAgent(ABC):
     def _load_agent_memory(self) -> str:
         """
         Load this role's persistent memory from _knowledge/<slug>/.
-        Returns empty string for ROOT/task-force agents (no fixed dept).
+        Returns empty string when no dept can be determined.
         """
         from dri.core.memory import AgentMemory
         mem = AgentMemory.for_agent(
             self._ctx.workspace_root,
             self._ctx.workspace_permissions,
             self._ctx.title,
+            memory_dept=self._ctx.memory_dept,
         )
         return mem.load() if mem is not None else ""
 
@@ -430,6 +431,11 @@ class BaseAgent(ABC):
         if not self._ctx.workspace_root:
             return None
         slug = re.sub(r"[^a-z0-9]+", "-", (title or self._ctx.title).lower()).strip("-")
+        # Priority 1: explicit memory_dept from context (task-force mode)
+        if self._ctx.memory_dept:
+            dept = self._ctx.memory_dept.rstrip("/")
+            return f"{dept}/_knowledge/{slug}"
+        # Priority 2: derive from dept-specific permission (one-shot mode fallback)
         for perm in self._ctx.workspace_permissions:
             if perm.path and perm.path not in ("", "shared/") and perm.can_write:
                 dept = perm.path.rstrip("/")
