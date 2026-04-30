@@ -504,17 +504,34 @@ Layer 6 (ACTIVE): Company Task History
 - [x] SendGrid — `src/dri/connectors/sendgrid_email.py`
 - [x] LinkedIn — `src/dri/connectors/linkedin.py`
 
-### NEXT AGENT PRIORITY: GitHub connector + Budget override at spawn
+### NEXT AGENT PRIORITY: Fix Layer 2 memory (CRITICAL BUG in production)
 
-**Layer 5 remaining**: `token_budget` is stored via `dri company team promote` but not yet
-applied at spawn time. To wire it up, `_run_task_force()` could look up known agents'
-custom budgets and pass them to the manager so it can use them when building SpawnRequests.
-This requires modifying how the manager allocates child budgets (LLM decides today).
+**Bug**: Layer 2 (role memory — `expertise.md` / `feedback.md`) is silently broken in
+persistent company mode. All task-force agents receive `WorkspacePermission(path="", ...)`.
+`AgentMemory.for_agent()` in `memory.py:55-61` returns `None` whenever `path=""` because
+it requires a non-empty, non-shared dept path. So no agent in production ever reads or
+writes its role memory.
 
-**GitHub connector** — lets agents push real code:
-- `create_repo` / `push_branch` / `create_pr` via GitHub API
-- action_type `github_action`. Requires `GITHUB_TOKEN` in .env.
-- Same propose_external_action approval flow — agent proposes, founder approves, connector executes.
+**Fix**: Add `memory_dept: str = ""` field to `ContextPacket`. Set it in `Spawner.spawn()`
+to `_slug(request.title)` when `root_workspace_access=True`. Pass it through
+`ContextBuilder.build()`. Update `AgentMemory.for_agent()` and `BaseAgent._knowledge_path_str()`
+to use `memory_dept` as the primary source (falling back to permission scan for one-shot mode).
+
+Detailed step-by-step in `memory/next_task.md`.
+
+**Files to change**: `src/dri/core/memory.py`, `src/dri/orchestration/spawner.py`,
+`src/dri/agents/base.py`, `src/dri/core/memory.py` (ContextPacket + ContextBuilder).
+
+### Gap 2: CEO doesn't see task history in chat mode (important)
+
+`shared/_company_history.md` is injected into task force leads (Layer 6) but NOT into
+the CEO's system prompt in chat mode. Easy fix: load and inject it in `CompanyExecutor.chat()`
+the same way `_run_task_force()` does.
+
+### Gap 3: token_budget not applied at spawn (minor)
+
+`CompanyAgent.token_budget` is stored via `dri company team promote` but the spawner
+never uses it. See `memory/next_task.md` for the wiring plan.
 
 ### Other remaining improvements
 - **Budget borrowing** — unused sibling tokens pooled for reuse.
