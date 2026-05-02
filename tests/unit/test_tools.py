@@ -197,6 +197,14 @@ async def test_shell_exec_failed_exit_code(workspace_dir):
 
 
 @pytest.mark.asyncio
+async def test_shell_exec_curl_allowed(workspace_dir):
+    """curl is in the allowlist since Sprint 6 — must not be blocked."""
+    import dri.tools.shell_exec as se_module
+    assert "curl" in se_module._ALLOWED_EXECUTABLES, "curl must be in the allowlist"
+    assert "wget" in se_module._ALLOWED_EXECUTABLES, "wget must be in the allowlist"
+
+
+@pytest.mark.asyncio
 async def test_web_search_no_api_key(monkeypatch):
     # web_search.py binds `settings` at import time, so we patch the module variable directly.
     from types import SimpleNamespace

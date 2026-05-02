@@ -157,3 +157,74 @@ def test_context_builder_memory_dept_defaults_to_empty(sample_config):
         company_pitch="Y",
     )
     assert packet.memory_dept == ""
+
+
+# ── Worker prompt condensation (Sprint 6) ─────────────────────────────────
+
+
+def _make_config(role: AgentRole) -> AgentConfig:
+    return AgentConfig(
+        role=role,
+        title="Dev" if role == AgentRole.WORKER else "CTO",
+        mission="Build things.",
+        allowed_tools=["file_write"],
+        budget=BudgetAllocation(total=50_000),
+    )
+
+
+def test_worker_prompt_shorter_than_manager():
+    """Workers get a condensed Rules block; managers get the full version."""
+    long_kb = "A" * 3000
+    long_hist = "B" * 2000
+
+    worker_packet = ContextBuilder.build(
+        child_config=_make_config(AgentRole.WORKER),
+        parent_title="CTO",
+        company_name="TestCo",
+        company_pitch="test",
+        company_kb=long_kb,
+        company_history_snippet=long_hist,
+    )
+    manager_packet = ContextBuilder.build(
+        child_config=_make_config(AgentRole.MANAGER),
+        parent_title="CEO",
+        company_name="TestCo",
+        company_pitch="test",
+        company_kb=long_kb,
+        company_history_snippet=long_hist,
+    )
+
+    worker_prompt = worker_packet.to_system_prompt()
+    manager_prompt = manager_packet.to_system_prompt()
+
+    assert len(worker_prompt) < len(manager_prompt), (
+        f"Worker prompt ({len(worker_prompt)}) should be shorter than manager prompt ({len(manager_prompt)})"
+    )
+
+
+def test_worker_kb_truncated_at_1500():
+    """Workers see at most 1500 chars of the company KB (truncation marker present)."""
+    long_kb = "K" * 3000
+    worker_packet = ContextBuilder.build(
+        child_config=_make_config(AgentRole.WORKER),
+        parent_title="CTO",
+        company_name="TestCo",
+        company_pitch="test",
+        company_kb=long_kb,
+    )
+    prompt = worker_packet.to_system_prompt()
+    assert "[...truncated]" in prompt, "Worker KB should include truncation marker"
+
+
+def test_manager_kb_not_truncated():
+    """Managers receive the full KB without truncation."""
+    long_kb = "K" * 3000
+    manager_packet = ContextBuilder.build(
+        child_config=_make_config(AgentRole.MANAGER),
+        parent_title="CEO",
+        company_name="TestCo",
+        company_pitch="test",
+        company_kb=long_kb,
+    )
+    prompt = manager_packet.to_system_prompt()
+    assert prompt.count("K") >= 3000
