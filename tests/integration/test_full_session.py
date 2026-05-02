@@ -36,9 +36,12 @@ def _tool_response(tool_name: str, tool_input: dict) -> LLMResponse:
 
 @pytest.fixture(autouse=True)
 async def clean_db():
+    from dri.storage.database import reset_engine
+    reset_engine(test_db_url="sqlite+aiosqlite:///:memory:")
     await init_db()
     yield
     await drop_db()
+    reset_engine()
 
 
 @pytest.mark.asyncio

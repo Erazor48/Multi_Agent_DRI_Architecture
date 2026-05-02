@@ -43,7 +43,7 @@ async def db_session():
     from dri.storage.database import drop_db, get_session, init_db, reset_engine
     # Ensure settings cache returns :memory: URL (not the production DB from .env)
     get_settings.cache_clear()
-    reset_engine()
+    reset_engine(test_db_url="sqlite+aiosqlite:///:memory:")
     await init_db()
     async with get_session() as session:
         yield session

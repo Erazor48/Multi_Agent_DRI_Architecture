@@ -21,9 +21,6 @@ os.environ["DATABASE_URL"] = _TEST_DB_URL  # restore :memory: after dotenv overr
 def reload_settings():
     """Vide le cache lru_cache de settings pour que les vars .env soient prises en compte."""
     from dri.config.settings import get_settings
-    from dri.storage.database import reset_engine
     get_settings.cache_clear()
-    reset_engine()
     yield
     get_settings.cache_clear()
-    reset_engine()

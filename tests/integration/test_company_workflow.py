@@ -27,10 +27,12 @@ import pytest_asyncio
 @pytest_asyncio.fixture(autouse=True)
 async def reset_db():
     """Fresh in-memory DB for every test."""
-    from dri.storage.database import drop_db, init_db
+    from dri.storage.database import drop_db, init_db, reset_engine
+    reset_engine(test_db_url="sqlite+aiosqlite:///:memory:")
     await init_db()
     yield
     await drop_db()
+    reset_engine()
 
 
 # ─── 1. CompanyExecutor.create() ─────────────────────────────────────────────
