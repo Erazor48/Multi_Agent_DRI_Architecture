@@ -1162,6 +1162,109 @@ def company_decommission(
     ))
 
 
+@company_app.command("delete")
+def company_delete(
+    company_id: str = typer.Option("", "--id", help="Company ID (uses active/latest if omitted)"),
+    archive: bool = typer.Option(False, "--archive", "-a", help="Archive workspace before deletion"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Delete a company: removes DB record and workspace folder atomically."""
+    import shutil
+    from datetime import date
+    from pathlib import Path
+    from dri.config.settings import get_settings
+    import re
+
+    async def _get_company():
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import PersistentCompanyRepository
+        await init_db()
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            c = await repo.get(company_id) if company_id else await repo.get_latest()
+        return c
+
+    company = asyncio.run(_get_company())
+    if company is None:
+        console.print("[red]No company found. Use [bold]dri company list[/bold] to see options.[/red]")
+        raise typer.Exit(1)
+
+    slug = re.sub(r"[^a-z0-9]+", "-", company.name.lower()).strip("-")
+    ws_path = Path(get_settings().workspace_dir) / slug
+
+    # Preview workspace files
+    console.print()
+    if ws_path.exists():
+        all_files = sorted(ws_path.rglob("*"))
+        all_files = [f for f in all_files if f.is_file()]
+        console.print(Panel(
+            f"[bold]Company:[/bold] {company.name}\n"
+            f"[bold]ID:[/bold] {company.id}\n"
+            f"[bold]Vision:[/bold] {company.vision[:80]}\n"
+            f"[bold]Workspace:[/bold] {ws_path}\n"
+            f"[bold]Files:[/bold] {len(all_files)} file(s)",
+            title="[bold red]Delete Preview[/bold red]",
+            border_style="red",
+        ))
+        if all_files:
+            console.print("\n[bold]Files that will be deleted:[/bold]")
+            for f in all_files[:20]:
+                console.print(f"  [dim]{f.relative_to(ws_path)}[/dim]")
+            if len(all_files) > 20:
+                console.print(f"  [dim]... and {len(all_files) - 20} more[/dim]")
+        console.print()
+    else:
+        console.print(Panel(
+            f"[bold]Company:[/bold] {company.name}\n"
+            f"[bold]ID:[/bold] {company.id}\n"
+            f"[dim]No workspace folder found on disk.[/dim]",
+            title="[bold red]Delete Preview[/bold red]",
+            border_style="red",
+        ))
+
+    if not force:
+        confirmed = typer.confirm(
+            f"Permanently delete '{company.name}' and its workspace?",
+            default=False,
+        )
+        if not confirmed:
+            console.print("[dim]Cancelled.[/dim]")
+            raise typer.Exit(0)
+
+    # Archive workspace if requested
+    if archive and ws_path.exists():
+        archive_dest = Path(get_settings().workspace_dir) / "_archive" / f"{slug}-{date.today().isoformat()}"
+        archive_dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(ws_path), str(archive_dest))
+        console.print(f"[green]Workspace archived → _archive/{slug}-{date.today().isoformat()}/[/green]")
+    elif ws_path.exists():
+        shutil.rmtree(str(ws_path))
+        console.print(f"[green]Workspace deleted: {slug}/[/green]")
+
+    # Delete DB record (company + messages + agents)
+    async def _delete() -> bool:
+        from dri.storage.database import get_session
+        from dri.storage.repositories import PersistentCompanyRepository
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            return await repo.delete(company.id)
+
+    deleted = asyncio.run(_delete())
+    if deleted:
+        console.print(f"[green]DB record deleted for '{company.name}'.[/green]")
+    else:
+        console.print(f"[yellow]Warning: DB record for '{company.name}' not found (already removed?).[/yellow]")
+
+    # Clear active state if needed
+    from dri.config.state import get_active_company_id, clear_active_company
+    if get_active_company_id() == company.id:
+        clear_active_company()
+        console.print("[dim]Active company cleared.[/dim]")
+
+    console.print()
+    console.print(f"[bold green]{company.name}[/bold green] has been deleted.")
+
+
 @app.command()
 def sessions() -> None:
     """List all past sessions."""

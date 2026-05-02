@@ -314,6 +314,7 @@ class PersistentCompanyRepository:
             created_at=company.created_at,
         )
         self._db.add(orm)
+        await self._db.flush()
 
     async def get(self, company_id: str) -> PersistentCompany | None:
         import json
@@ -379,6 +380,22 @@ class PersistentCompanyRepository:
             )
             for row in result.scalars()
         ]
+
+    async def delete(self, company_id: str) -> bool:
+        """Delete a company and all its associated messages and agents. Returns True if found."""
+        await self._db.flush()
+        row = await self._db.get(PersistentCompanyORM, company_id)
+        if row is None:
+            return False
+        await self._db.execute(
+            delete(CompanyMessageORM).where(CompanyMessageORM.company_id == company_id)
+        )
+        await self._db.execute(
+            delete(CompanyAgentORM).where(CompanyAgentORM.company_id == company_id)
+        )
+        await self._db.delete(row)
+        await self._db.flush()
+        return True
 
 
 class CompanyMessageRepository:
