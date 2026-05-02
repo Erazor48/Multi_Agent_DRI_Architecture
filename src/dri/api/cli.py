@@ -1048,6 +1048,92 @@ def company_budget(
         console.print()
 
 
+@company_app.command("files")
+def company_files(
+    company_id: str = typer.Option("", "--id", help="Company ID (uses active/latest if omitted)"),
+    dept: str = typer.Option("", "--dept", "-d", help="Filter by department slug (e.g. 'shared', 'ceo')"),
+) -> None:
+    """Show the workspace file tree for a company."""
+    from pathlib import Path
+    from rich.tree import Tree
+    import re
+    import unicodedata
+
+    def _slug(name: str) -> str:
+        normalized = unicodedata.normalize("NFD", name.lower())
+        ascii_only = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9]+", "-", ascii_only).strip("-")
+
+    async def _get_company():
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import PersistentCompanyRepository
+        await init_db()
+        async with get_session() as db:
+            repo = PersistentCompanyRepository(db)
+            return await repo.get(company_id) if company_id else await repo.get_latest()
+
+    company = asyncio.run(_get_company())
+    if company is None:
+        console.print("[red]No company found.[/red]")
+        raise typer.Exit(1)
+
+    from dri.config.settings import get_settings
+    ws_root = Path(get_settings().workspace_dir) / _slug(company.name)
+
+    if not ws_root.exists():
+        console.print(f"[yellow]Workspace not found: {ws_root}[/yellow]")
+        raise typer.Exit(1)
+
+    # Determine which directories to show
+    if dept:
+        dirs_to_show = [ws_root / dept]
+        if not dirs_to_show[0].exists():
+            console.print(f"[yellow]Department '{dept}' not found in workspace.[/yellow]")
+            raise typer.Exit(1)
+    else:
+        dirs_to_show = sorted([d for d in ws_root.iterdir() if d.is_dir()])
+
+    console.print()
+    title = f"[bold]{company.name}[/bold] workspace"
+    if dept:
+        title += f" / [dim]{dept}[/dim]"
+    tree = Tree(title)
+
+    _SKIP_DIRS = {"node_modules", ".next", "__pycache__", ".git"}
+
+    def _add_dir(node: Tree, path: Path, depth: int = 0) -> int:
+        count = 0
+        if depth > 5:
+            node.add("[dim]...[/dim]")
+            return 0
+        try:
+            entries = sorted(path.iterdir(), key=lambda x: (x.is_file(), x.name))
+        except PermissionError:
+            return 0
+        for entry in entries:
+            if entry.name in _SKIP_DIRS:
+                node.add(f"[dim]{entry.name}/ (skipped)[/dim]")
+                continue
+            if entry.is_dir():
+                sub = node.add(f"[bold blue]{entry.name}/[/bold blue]")
+                sub_count = _add_dir(sub, entry, depth + 1)
+                count += sub_count
+            else:
+                size = entry.stat().st_size
+                size_str = f"[dim]{size:,}B[/dim]" if size < 1024 else f"[dim]{size // 1024}KB[/dim]"
+                node.add(f"[green]{entry.name}[/green] {size_str}")
+                count += 1
+        return count
+
+    total = 0
+    for d in dirs_to_show:
+        dept_node = tree.add(f"[bold cyan]{d.name}/[/bold cyan]")
+        total += _add_dir(dept_node, d)
+
+    console.print(tree)
+    console.print(f"\n[dim]{total} file(s) in workspace[/dim]\n")
+
+
 @company_app.command("decommission")
 def company_decommission(
     title: str = typer.Argument(..., help="Exact department title to decommission (e.g. 'Chief Marketing Officer')"),
