@@ -16,3 +16,4 @@ test_workspace/
 .ruff_cache/
 dist/
 *.egg-info/
+*.log

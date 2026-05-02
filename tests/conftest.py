@@ -11,12 +11,20 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
+# Force-override DATABASE_URL so tests NEVER touch the production DB,
+# regardless of when settings.py was imported.
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ.setdefault("LLM_PROVIDER", "gemini")
 os.environ.setdefault("GOOGLE_API_KEY", "test-google-key-not-real")
 os.environ.setdefault("ANTHROPIC_API_KEY", "")
-os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("WORKSPACE_DIR", "./test_workspace")
 os.environ.setdefault("BUDGET_MAX_TOKENS_PER_SESSION", "100000")
+
+# Clear lru_cache on settings so that the first call inside tests re-reads os.environ
+# (which already has DATABASE_URL=:memory:). This is safe even if settings.py was
+# already imported before this conftest module ran.
+from dri.config.settings import get_settings as _get_settings_fn
+_get_settings_fn.cache_clear()
 
 
 @pytest.fixture(scope="session")
@@ -26,12 +34,22 @@ def event_loop_policy():
 
 @pytest_asyncio.fixture
 async def db_session():
-    """Provide a clean in-memory DB session for each test."""
-    from dri.storage.database import drop_db, get_session, init_db
+    """Provide a clean in-memory DB session for each test.
+
+    Forces both settings cache and engine to re-initialize with DATABASE_URL=:memory:
+    before each test, guaranteeing the production DB file is never touched.
+    """
+    from dri.config.settings import get_settings
+    from dri.storage.database import drop_db, get_session, init_db, reset_engine
+    # Ensure settings cache returns :memory: URL (not the production DB from .env)
+    get_settings.cache_clear()
+    reset_engine()
     await init_db()
     async with get_session() as session:
         yield session
     await drop_db()
+    reset_engine()
+    get_settings.cache_clear()  # restore clean state for next test
 
 
 # ──────────────────────────────────────────────────────────────────────────────
