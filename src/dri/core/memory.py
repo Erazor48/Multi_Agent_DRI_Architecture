@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 from dri.core.models import AgentConfig, AgentRole, Skill, Task, WorkspacePermission
@@ -151,6 +152,7 @@ class ContextPacket:
         lines: list[str] = []
 
         lines.append(f"# {self.title}")
+        lines.append(f"\nToday's date: **{date.today().isoformat()}**")
         lines.append(f"\nYou are **{self.title}** at **{self.company_name or 'this company'}**.")
         lines.append(f"You report directly to **{self.parent_title}**.")
         lines.append("\n## Your Mission\n")

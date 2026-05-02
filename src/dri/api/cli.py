@@ -1169,11 +1169,17 @@ def company_delete(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
     """Delete a company: removes DB record and workspace folder atomically."""
+    import re
     import shutil
+    import unicodedata
     from datetime import date
     from pathlib import Path
     from dri.config.settings import get_settings
-    import re
+
+    def _company_slug(name: str) -> str:
+        normalized = unicodedata.normalize("NFD", name.lower())
+        ascii_only = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+        return re.sub(r"[^a-z0-9]+", "-", ascii_only).strip("-")
 
     async def _get_company():
         from dri.storage.database import init_db, get_session
@@ -1189,7 +1195,7 @@ def company_delete(
         console.print("[red]No company found. Use [bold]dri company list[/bold] to see options.[/red]")
         raise typer.Exit(1)
 
-    slug = re.sub(r"[^a-z0-9]+", "-", company.name.lower()).strip("-")
+    slug = _company_slug(company.name)
     ws_path = Path(get_settings().workspace_dir) / slug
 
     # Preview workspace files
