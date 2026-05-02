@@ -546,19 +546,22 @@ Layer 6 (ACTIVE): Company Task History
   normalized task descriptions). A second `spawn_team` call for the same task is blocked with
   a `[DUPLICATE SPAWN BLOCKED]` message instead of running a second team.
 
-### Other remaining improvements
-- **Budget borrowing** — unused sibling tokens pooled for reuse.
-- **GitHub connector** — `git push` / `create_pr` / `create_repo` via GitHub API. Lets workers push real code. action_type `github_action`. Requires `GITHUB_TOKEN` in .env.
-- **Integration tests** — `tests/integration/test_company_workflow.py`.
+- [x] **Budget borrowing** — `BudgetManager.return_unused()` + `add_to_allocation()`. Wired in `manager.py`: unused tokens pooled from completed workers, redistributed to budget-exhausted workers before they are retried.
+- [x] **GitHub connector** — `src/dri/connectors/github.py`. Handles `github_push`, `github_create_pr`, `github_create_repo` action types. Requires `GITHUB_TOKEN` in `.env`. Registered in `connectors/__init__.py`.
+- [x] **Integration tests** — `tests/integration/test_company_workflow.py` + `test_persistent_company.py` + `test_full_session.py`. All 187 tests pass.
+- [x] **`dri company files`** — shows workspace file tree via Rich with dept filter and file sizes.
+- [x] **`dri company delete`** — atomically removes DB record (company + messages + agents) and workspace folder. Supports `--archive` and `--force`.
+- [x] **`dri company recover`** — scans for orphan workspaces and re-imports them. `dri company list` shows orphan warning.
+- [x] **Production DB isolation** — test fixtures use explicit `:memory:` URL; `reload_settings` no longer clears the test DB override; 187/187 tests pass without touching the production DB.
 
 ---
 
 ## Notes for the Next Agent
 
 - **Read the full file before touching anything. Especially the Memory Architecture section.**
-- The active company for this project is **Momentum** (persistent company in DB).
-  ID: `31b724fd-4e9c-4d45-be3e-978e2c9ac22b`. Workspace: `workspace/momentum/`.
-  Use `uv run dri company list` to confirm.
+- Active companies (as of 2026-05-02): **Agence NextModerne** and **Zenith** — recovered from disk.
+  `workspace/momentum/` is a partial orphan (no `shared/`) — no DB record, cannot be recovered.
+  Use `uv run dri company list` to confirm current state.
 - **LangGraph is NOT used** despite being in the architecture table. `graph.py` is a skeleton.
   Don't add LangGraph code without user approval.
 - `settings.py` singleton: `from dri.config.settings import settings` or `get_settings()`.
@@ -569,11 +572,12 @@ Layer 6 (ACTIVE): Company Task History
 - `_wip/` auto-deleted. `_knowledge/` never deleted. `shared/_company_knowledge.md` is institutional memory.
 - **Memory layers in brief**: active context (base.py _MAX_HISTORY_ROUNDS=12) → role files (_knowledge/) → company KB (shared/_company_knowledge.md) → CEO history summary (company_messages role="summary"). See Memory Architecture section for full detail.
 - **Connectors** (`src/dri/connectors/`): self-register at import. Pattern: `ConnectorRegistry.register(MyConnector())` at module bottom + import in `__init__.py`.
-- **propose_external_action**: `content` must be the full text. `action_type` in `_VALID_TYPES`. Enum: `email`, `webhook`, `linkedin_message`, `social_post`, `sms`, `slack_message`, `phone_call`, `outreach_message`, `bulk_file_delete`, `other`.
+- **propose_external_action**: `content` must be the full text. `action_type` in `_VALID_TYPES`. Enum: `email`, `webhook`, `linkedin_message`, `social_post`, `sms`, `slack_message`, `phone_call`, `outreach_message`, `bulk_file_delete`, `github_push`, `github_create_pr`, `github_create_repo`, `other`.
 - **Approval dispatch**: after founder approves, `cli.py` calls `ConnectorRegistry.get_for(action_type, action)` → executes.
 - **Windows UTF-8**: `cli.py` sets `sys.stdout` to UTF-8 + `Console(legacy_windows=False)`.
 - **Provider**: Gemini via Vertex AI. Workers = gemini-2.5-flash. CEO = gemini-2.5-pro.
-- **Tests**: `uv run pytest tests/unit/ -q` must stay at **122/122** before any commit.
+- **Tests**: `uv run pytest tests/ -q` must stay at **187/187** (2 skipped) before any commit.
+- **Slug normalization**: always use `_slug()` in `cli.py` or `_company_slug()` in `company_executor.py` — both use NFD normalization for French accents. Never use plain `re.sub(r'[^a-z0-9]+', '-', name.lower())` directly.
 
 ### Real-world test to run (requested by founder, 2026-05-01)
 

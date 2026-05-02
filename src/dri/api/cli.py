@@ -27,6 +27,15 @@ if sys.platform == "win32":
 console = Console(highlight=False, legacy_windows=False)
 
 
+def _slug(name: str) -> str:
+    """NFD-normalize + slugify a company or department name (handles French accents)."""
+    import re
+    import unicodedata
+    normalized = unicodedata.normalize("NFD", name.lower())
+    ascii_only = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    return re.sub(r"[^a-z0-9]+", "-", ascii_only).strip("-")
+
+
 def _print_banner() -> None:
     console.print()
     console.print(
@@ -448,13 +457,11 @@ def _save_pending(workspace_root: str, actions: list[dict]) -> None:
 
 
 async def _get_workspace(company_id: str) -> str | None:
-    import re
     from dri.config.settings import get_settings
     c = await _resolve_company(company_id)
     if c is None:
         return None
-    slug = re.sub(r"[^a-z0-9]+", "-", c.name.lower()).strip("-")
-    return str(get_settings().workspace_dir / slug)
+    return str(get_settings().workspace_dir / _slug(c.name))
 
 
 @approvals_app.command("list")
@@ -783,11 +790,10 @@ def team_show(
         console.print("[dim]Use [bold]dri company team list[/bold] to see all members.[/dim]")
         raise typer.Exit(1)
 
-    import re
     knowledge_path = (
-        f"workspace/{re.sub(r'[^a-z0-9]+', '-', company.name.lower()).strip('-')}/"
+        f"workspace/{_slug(company.name)}/"
         f"{agent.dept_slug}/_knowledge/"
-        f"{re.sub(r'[^a-z0-9]+', '-', agent.title.lower()).strip('-')}/"
+        f"{_slug(agent.title)}/"
     )
     rate_color = "green" if agent.success_rate >= 0.8 else ("yellow" if agent.success_rate >= 0.5 else "red")
 
@@ -1056,13 +1062,6 @@ def company_files(
     """Show the workspace file tree for a company."""
     from pathlib import Path
     from rich.tree import Tree
-    import re
-    import unicodedata
-
-    def _slug(name: str) -> str:
-        normalized = unicodedata.normalize("NFD", name.lower())
-        ascii_only = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
-        return re.sub(r"[^a-z0-9]+", "-", ascii_only).strip("-")
 
     async def _get_company():
         from dri.storage.database import init_db, get_session
@@ -1142,7 +1141,6 @@ def company_decommission(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
 ) -> None:
     """Decommission a department: handle its files and remove it from the org chart."""
-    import re
     import shutil
     from pathlib import Path
     from dri.config.settings import get_settings
@@ -1156,10 +1154,8 @@ def company_decommission(
             c = await repo.get(company_id) if company_id else await repo.get_latest()
         if c is None:
             return None
-        slug = re.sub(r"[^a-z0-9]+", "-", c.name.lower()).strip("-")
-        dept_slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
-        ws = str(get_settings().workspace_dir / slug)
-        return c.id, ws, dept_slug
+        ws = str(get_settings().workspace_dir / _slug(c.name))
+        return c.id, ws, _slug(title)
 
     info = asyncio.run(_get_company())
     if info is None:
@@ -1255,17 +1251,10 @@ def company_delete(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ) -> None:
     """Delete a company: removes DB record and workspace folder atomically."""
-    import re
     import shutil
-    import unicodedata
     from datetime import date
     from pathlib import Path
     from dri.config.settings import get_settings
-
-    def _company_slug(name: str) -> str:
-        normalized = unicodedata.normalize("NFD", name.lower())
-        ascii_only = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
-        return re.sub(r"[^a-z0-9]+", "-", ascii_only).strip("-")
 
     async def _get_company():
         from dri.storage.database import init_db, get_session
@@ -1281,7 +1270,7 @@ def company_delete(
         console.print("[red]No company found. Use [bold]dri company list[/bold] to see options.[/red]")
         raise typer.Exit(1)
 
-    slug = _company_slug(company.name)
+    slug = _slug(company.name)
     ws_path = Path(get_settings().workspace_dir) / slug
 
     # Preview workspace files
