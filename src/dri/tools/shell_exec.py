@@ -37,6 +37,8 @@ _ALLOWED_EXECUTABLES: frozenset[str] = frozenset({
     "curl", "wget",
     # Video animation rendering
     "manim",
+    # Video/audio download (YouTube clips, royalty-free music)
+    "yt-dlp",
 })
 
 # Git subcommands that destroy working-tree content unconditionally.
