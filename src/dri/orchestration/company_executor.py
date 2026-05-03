@@ -934,7 +934,7 @@ async def _run_task_force(
         except OSError:
             pass
 
-    base_tools = ["file_list", "file_read", "file_write", "file_delete", "propose_external_action", "shell_exec"]
+    base_tools = ["file_list", "file_read", "file_write", "file_delete", "propose_external_action", "shell_exec", "tts_generate"]
     if settings.has_web_search:
         base_tools.insert(0, "web_search")
 

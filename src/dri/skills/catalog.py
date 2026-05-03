@@ -218,6 +218,102 @@ class SkillCatalog:
             ),
             required_tools=["shell_exec", "file_write", "file_list"],
         ),
+        "video_production": Skill(
+            name="Video Production",
+            description=(
+                "Create full videos with animation, voice narration, and background music. "
+                "Uses Manim for animation, Google Cloud TTS for voice, ffmpeg for mixing."
+            ),
+            instructions=(
+                "## Full pipeline overview\n"
+                "1. Create animation with Manim → video.mp4\n"
+                "2. Generate voice narration with tts_generate → narration.wav\n"
+                "3. Download royalty-free music with curl → music.mp3\n"
+                "4. Mix everything with ffmpeg → final.mp4\n"
+                "5. Save final.mp4 to shared/ and propose youtube_upload\n\n"
+
+                "## Step 1 — Animation with Manim\n"
+                "Write a Python script in <dept>/_wip/scene.py:\n"
+                "```python\n"
+                "from manim import *\n"
+                "class MyScene(Scene):\n"
+                "    def construct(self):\n"
+                "        title = Text('Mon titre').scale(1.5)\n"
+                "        self.play(Write(title))\n"
+                "        self.wait(2)\n"
+                "```\n"
+                "Render: `manim render <dept>/_wip/scene.py MyScene --format mp4 -qh`\n"
+                "Output: `media/videos/scene/1080p60/MyScene.mp4` (relative to cwd)\n\n"
+
+                "## Step 2 — Voice narration\n"
+                "Use tts_generate tool:\n"
+                "- text: full narration script (what the voice will say)\n"
+                "- output_path: '<dept>/_wip/narration.wav'\n"
+                "- voice_name: use settings default or specify (fr-FR-Studio-A for premium)\n"
+                "The narration duration determines the video final length.\n\n"
+
+                "## Step 3 — Background music\n"
+                "Download a royalty-free track from Pixabay Music (no account needed):\n"
+                "```\n"
+                "curl -L 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0c6ff1bab.mp3'"
+                " -o <dept>/_wip/music.mp3\n"
+                "```\n"
+                "Or generate a simple ambient tone:\n"
+                "```\n"
+                "ffmpeg -f lavfi -i 'sine=frequency=220:duration=300'"
+                " -af 'afade=t=in:d=3,volume=0.3' <dept>/_wip/music.mp3\n"
+                "```\n\n"
+
+                "## Step 4 — ffmpeg mix (video + voice + music)\n"
+                "```\n"
+                "ffmpeg -i <dept>/_wip/video.mp4 \\\n"
+                "       -i <dept>/_wip/narration.wav \\\n"
+                "       -i <dept>/_wip/music.mp3 \\\n"
+                "  -filter_complex \\\n"
+                "    '[1:a]volume=1.0[voice];"
+                "[2:a]volume=0.20,aloop=loop=-1:size=2e+09[music];"
+                "[voice][music]amix=inputs=2:duration=first[audio]' \\\n"
+                "  -map 0:v -map '[audio]' \\\n"
+                "  -c:v copy -c:a aac -b:a 192k -shortest \\\n"
+                "  shared/final.mp4\n"
+                "```\n"
+                "Key flags:\n"
+                "- `volume=0.20` on music = 20% of voice volume\n"
+                "- `aloop=loop=-1` = music loops indefinitely\n"
+                "- `duration=first` = audio ends when voice ends\n"
+                "- `-shortest` = video cut to audio length\n\n"
+
+                "## Step 5 — If no video (voice-only with static image)\n"
+                "```\n"
+                "ffmpeg -loop 1 -i <dept>/_wip/background.png \\\n"
+                "       -i <dept>/_wip/narration.wav \\\n"
+                "  -c:v libx264 -tune stillimage -c:a aac \\\n"
+                "  -pix_fmt yuv420p -shortest \\\n"
+                "  shared/final.mp4\n"
+                "```\n\n"
+
+                "## Step 6 — Upload to YouTube\n"
+                "```\n"
+                "propose_external_action(\n"
+                "  action_type='youtube_upload',\n"
+                "  recipient='default',\n"
+                "  subject='Video title',\n"
+                "  content='Video description with hashtags',\n"
+                "  file_path='shared/final.mp4',\n"
+                "  rationale='...',\n"
+                ")\n"
+                "```\n\n"
+
+                "## Rules\n"
+                "- ALWAYS verify each file exists with file_list before the next step.\n"
+                "- Write narration script FIRST, then build the animation to match its duration.\n"
+                "- Test with `-ql` (low quality) before final `-qh` render to save time.\n"
+                "- If tts_generate fails, check that Cloud Text-to-Speech API is enabled in GCP.\n"
+                "- Final MP4 MUST be in shared/ before proposing youtube_upload.\n"
+                "- Cite shared/final.mp4 in your report.\n"
+            ),
+            required_tools=["shell_exec", "tts_generate", "file_write", "file_list", "file_read"],
+        ),
         # ── Finance ──────────────────────────────────────────
         "financial_modeling": Skill(
             name="Financial Modeling",
