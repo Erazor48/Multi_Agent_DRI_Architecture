@@ -179,6 +179,7 @@ class ManagerAgent(BaseAgent):
 
         # Step 3: Spawn agents and run them in parallel
         await self._registry.update_status(self.agent_id, AgentStatus.WAITING)
+        self._report(f"Spawning {len(spawn_requests)} agent(s)...")
 
         async def _spawn_and_run(req: SpawnRequest, task_description: str) -> tuple[str, str | None]:
             """Run one child agent. Returns (result_str, agent_id_of_last_spawn)."""
@@ -195,6 +196,7 @@ class ManagerAgent(BaseAgent):
                     assigned_to="",
                     delegated_by=self.agent_id,
                 )
+                self._report(f"Spawning {r.title}...")
                 child_agent = await self._spawner.spawn(
                     r,
                     parent_title=self._ctx.title,
@@ -269,6 +271,11 @@ class ManagerAgent(BaseAgent):
         worker_titles = [req.title for req, _ in spawn_requests]
         return await self._synthesize(task, results_text, synthesis_approach, worker_titles)
 
+    def _report(self, msg: str) -> None:
+        spawner_ref = getattr(self, "_spawner_ref", None)
+        if spawner_ref is not None:
+            spawner_ref.report_progress(f"[{self._ctx.title}] {msg}")
+
     async def _explore_for_planning(self, task: Task) -> str:
         """
         Mini exploration loop (max 3 rounds, file_list + file_read only).
@@ -280,6 +287,7 @@ class ManagerAgent(BaseAgent):
         exploration_specs = ToolRegistry.to_claude_specs(file_tool_names)
         if not exploration_specs:
             return ""
+        self._report("Exploring workspace...")
 
         explore_msg = (
             f"## Objective (for context — do NOT plan yet)\n\n{task.description}"
@@ -325,6 +333,7 @@ class ManagerAgent(BaseAgent):
         Phase 2: design the team with create_org_plan, informed by exploration.
         Retries once with a stricter prompt if LLM responds with text instead of a tool call.
         """
+        self._report("Designing team plan...")
         exploration_summary = await self._explore_for_planning(task)
 
         base_content = (
@@ -384,6 +393,7 @@ class ManagerAgent(BaseAgent):
         Also writes targeted feedback to each worker's _knowledge/ directory so
         they accumulate domain expertise over successive tasks.
         """
+        self._report("Synthesizing team results...")
         dept_files = self._inventory_dept_files()
         shared_files = self._inventory_shared_files()
         all_files = sorted(set(dept_files + shared_files))

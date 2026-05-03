@@ -49,25 +49,29 @@ def _print_banner() -> None:
 
 
 def _render_progress_panel(lines: list[str]) -> Panel:
-    """Render agent tool-call activity as a color-coded live panel."""
-    if not lines:
-        return Panel(
-            Text("  Working...", style="dim"),
-            title="[bold]Team Activity[/bold]", border_style="blue", padding=(0, 1),
-        )
-    text = Text()
-    for line in lines[-10:]:
+    """Render agent tool-call activity as a color-coded live panel with spinner."""
+    from rich.console import Group as RichGroup
+    from rich.spinner import Spinner
+
+    latest = lines[-1] if lines else "Working..."
+    spinner = Spinner("dots", text=f"  {latest}", style="bold blue")
+
+    if len(lines) <= 1:
+        return Panel(spinner, title="[bold]Team Activity[/bold]", border_style="blue", padding=(0, 1))
+
+    history = Text()
+    for line in lines[-9:-1]:
         if "shell_exec" in line:
-            text.append(f"  {line}\n", style="yellow")
+            history.append(f"  {line}\n", style="yellow")
         elif "web_search" in line:
-            text.append(f"  {line}\n", style="cyan")
+            history.append(f"  {line}\n", style="cyan")
         elif "file_write" in line or "file_read" in line:
-            text.append(f"  {line}\n", style="green")
+            history.append(f"  {line}\n", style="green")
         elif "spawn" in line.lower():
-            text.append(f"  {line}\n", style="bold blue")
+            history.append(f"  {line}\n", style="bold blue")
         else:
-            text.append(f"  {line}\n", style="dim")
-    return Panel(text, title="[bold]Team Activity[/bold]", border_style="blue", padding=(0, 1))
+            history.append(f"  {line}\n", style="dim")
+    return Panel(RichGroup(history, spinner), title="[bold]Team Activity[/bold]", border_style="blue", padding=(0, 1))
 
 
 def _print_result(result: str) -> None:
@@ -213,12 +217,15 @@ def company_create(
 
     console.print(Panel(f"[italic]{pitch}[/italic]", title="[bold]Your Pitch[/bold]", border_style="dim"))
 
-    async def _run() -> "PersistentCompany":  # type: ignore[name-defined]
-        from dri.orchestration.company_executor import CompanyExecutor
-        return await CompanyExecutor.create(pitch, on_status=lambda _: None)
-
     with Progress(SpinnerColumn(), TextColumn("{task.description}"), TimeElapsedColumn(), console=console) as p:
-        p.add_task("Creating company...", total=None)
+        _ptask = p.add_task("Analyzing pitch...", total=None)
+
+        async def _run() -> "PersistentCompany":  # type: ignore[name-defined]
+            from dri.orchestration.company_executor import CompanyExecutor
+            def _on_create_status(msg: str) -> None:
+                p.update(_ptask, description=msg[:90])
+            return await CompanyExecutor.create(pitch, on_status=_on_create_status)
+
         try:
             company = asyncio.run(_run())
         except Exception as e:

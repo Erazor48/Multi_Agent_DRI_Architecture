@@ -681,7 +681,7 @@ async def _ceo_loop(
                     })
                     continue
                 _spawned_task_keys.add(task_key)
-                on_status(f"Spawning team: {task_desc[:60]}...")
+                on_status(f"Spawning team: {task_desc}")
                 result = await _run_task_force(
                     company=company,
                     task_description=task_desc,
@@ -705,6 +705,8 @@ async def _ceo_loop(
                 })
 
             elif tc.name in ("file_list", "file_read"):
+                _path_label = (tc.input or {}).get("path", "")
+                on_status(f"[CEO] {tc.name}" + (f": {_path_label}" if _path_label else ""))
                 tool_input = dict(tc.input or {})
                 tool_input["_workspace_root"] = workspace_root
                 tool_input["_permissions"] = ceo_permissions
@@ -734,10 +736,14 @@ async def _ceo_loop(
     return response.text or "(Max rounds reached)"
 
 
+_SNAPSHOT_MAX_FILES = 120  # cap file listing to keep CEO context budget under control
+
+
 def _workspace_snapshot(workspace_root: str) -> str:
     """
     Return a verified listing of every deliverable file currently on disk.
     Injected after every spawn_team result so the CEO never cites phantom files.
+    Capped at _SNAPSHOT_MAX_FILES lines to avoid blowing the context budget on large projects.
     """
     from pathlib import Path as _Path
     ws = _Path(workspace_root)
@@ -756,7 +762,11 @@ def _workspace_snapshot(workspace_root: str) -> str:
     if not files:
         return "**Workspace snapshot (verified on disk):** no files yet."
     lines = ["**Workspace snapshot (verified on disk — cite only from this list):**"]
-    lines += [f"  - {p}" for p in files]
+    truncated = len(files) > _SNAPSHOT_MAX_FILES
+    for p in files[:_SNAPSHOT_MAX_FILES]:
+        lines.append(f"  - {p}")
+    if truncated:
+        lines.append(f"  ... and {len(files) - _SNAPSHOT_MAX_FILES} more files (use file_list to explore)")
     return "\n".join(lines)
 
 
@@ -779,7 +789,8 @@ def _append_company_history(
         history_file.parent.mkdir(parents=True, exist_ok=True)
 
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        task_summary = task_description[:80].replace("\n", " ")
+        _task_clean = task_description.replace("\n", " ")
+        task_summary = (_task_clean[:100] + "…") if len(_task_clean) > 100 else _task_clean
 
         workers = registry.all_workers()
         sub_managers = [n for n in registry.all_managers() if n.title != "Task Force Lead"]
@@ -1113,7 +1124,7 @@ async def _run_task_force(
         task_repo = TaskRepository(db)
         await task_repo.create(session.id, task)
 
-    on_status(f"Task force active: {task_description[:80]}...")
+    on_status(f"Task force active: {task_description}")
     report = await manager.run(task)
 
     # All workers are done — remove any _wip/ dirs that workers left behind.

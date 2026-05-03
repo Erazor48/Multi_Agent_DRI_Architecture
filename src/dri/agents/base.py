@@ -309,10 +309,21 @@ class BaseAgent(ABC):
         # Surface tool activity to the outer observer (CLI spinner / status line).
         spawner_ref = getattr(self, "_spawner_ref", None)
         if spawner_ref is not None:
+            _code_preview = ""
+            if tool_name == "code_exec":
+                _first_line = (tool_input.get("code") or tool_input.get("script") or "").split("\n")[0].strip()
+                _code_preview = _first_line[:60] if _first_line else ""
+            _action_preview = ""
+            if tool_name == "propose_external_action":
+                _atype = tool_input.get("action_type", "")
+                _recipient = tool_input.get("recipient", "")
+                _action_preview = f"{_atype}" + (f" → {_recipient}" if _recipient else "")
             preview = (
                 tool_input.get("path")
-                or tool_input.get("command", "")[:40]
-                or tool_input.get("query", "")[:40]
+                or tool_input.get("command", "")[:60]
+                or tool_input.get("query", "")[:60]
+                or _code_preview
+                or _action_preview
                 or ""
             )
             label = f"{preview}" if preview else ""
