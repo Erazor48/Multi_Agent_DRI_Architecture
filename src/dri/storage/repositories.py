@@ -331,6 +331,28 @@ class PersistentCompanyRepository:
             created_at=result.created_at,
         )
 
+    async def get_by_prefix(self, prefix: str) -> PersistentCompany | None:
+        """Return the company whose ID starts with `prefix`, or None if 0 or 2+ match."""
+        import json
+        result = await self._db.execute(
+            select(PersistentCompanyORM)
+            .where(PersistentCompanyORM.id.like(f"{prefix}%"))
+            .order_by(PersistentCompanyORM.created_at.desc())
+        )
+        rows = list(result.scalars())
+        if len(rows) != 1:
+            return None
+        row = rows[0]
+        return PersistentCompany(
+            id=row.id,
+            name=row.name,
+            vision=row.vision,
+            pitch=row.pitch,
+            org_structure=json.loads(row.org_structure_json),
+            status=row.status,
+            created_at=row.created_at,
+        )
+
     async def get_latest(self) -> PersistentCompany | None:
         import json
         result = await self._db.execute(

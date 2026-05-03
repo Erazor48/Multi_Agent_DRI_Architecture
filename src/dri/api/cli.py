@@ -186,7 +186,10 @@ async def _resolve_company(company_id: str) -> "PersistentCompany | None":  # ty
     async with get_session() as db:
         repo = PersistentCompanyRepository(db)
         if company_id:
-            return await repo.get(company_id)
+            company = await repo.get(company_id)
+            if company is None:
+                company = await repo.get_by_prefix(company_id)
+            return company
         active_id = get_active_company_id()
         if active_id:
             c = await repo.get(active_id)

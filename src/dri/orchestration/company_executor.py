@@ -1014,7 +1014,14 @@ async def _run_task_force(
             "- content MUST be the FULL TEXT of the message — not a reference to a file. "
             "If you saved a draft to a file, read it back with file_read and paste the entire text "
             "into content before calling propose_external_action.\n"
-            "- recipient MUST be specific: an email address, a webhook URL, or a platform handle."
+            "- recipient MUST be specific: an email address, a webhook URL, or a platform handle.\n\n"
+            "## Deliverable placement — mandatory instruction to every worker\n"
+            "When writing each worker's mission, you MUST include this rule verbatim:\n"
+            "  'Save ALL final deliverables to `shared/`. Use your dept `_wip/` folder only for "
+            "intermediate drafts — never for final output. Only deviate from `shared/` if this "
+            "specific task explicitly requests dept-specific output.'\n"
+            "A worker that saves a final file to its dept root instead of `shared/` has violated "
+            "this rule. Note the violation in your synthesis report and propose moving the file."
         ),
         parent_id=None,
         depth=0,

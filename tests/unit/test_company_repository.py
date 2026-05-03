@@ -24,6 +24,49 @@ async def _make_company(db_session, name: str = "Test Co", pitch: str = "A test 
     return company
 
 
+class TestPersistentCompanyRepositoryGetByPrefix:
+    @pytest.mark.asyncio
+    async def test_unique_prefix_returns_company(self, db_session):
+        company = await _make_company(db_session, name="Prefix Alpha")
+        repo = PersistentCompanyRepository(db_session)
+        prefix = company.id[:8]
+        found = await repo.get_by_prefix(prefix)
+        assert found is not None
+        assert found.id == company.id
+
+    @pytest.mark.asyncio
+    async def test_full_id_as_prefix_returns_company(self, db_session):
+        company = await _make_company(db_session, name="Full ID Prefix")
+        repo = PersistentCompanyRepository(db_session)
+        found = await repo.get_by_prefix(company.id)
+        assert found is not None
+        assert found.id == company.id
+
+    @pytest.mark.asyncio
+    async def test_no_match_returns_none(self, db_session):
+        repo = PersistentCompanyRepository(db_session)
+        found = await repo.get_by_prefix("00000000-0000-dead-beef-000000000000")
+        assert found is None
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_prefix_returns_none(self, db_session):
+        # Force two companies to share the same ID prefix.
+        shared_prefix = "aaaaaaaa-bbbb-cccc-dddd"
+        c1 = PersistentCompany(
+            id=f"{shared_prefix}-000000000001", name="Ambig One",
+            vision="v", pitch="p", org_structure=[],
+        )
+        c2 = PersistentCompany(
+            id=f"{shared_prefix}-000000000002", name="Ambig Two",
+            vision="v", pitch="p", org_structure=[],
+        )
+        repo = PersistentCompanyRepository(db_session)
+        await repo.create(c1)
+        await repo.create(c2)
+        found = await repo.get_by_prefix(shared_prefix)
+        assert found is None
+
+
 class TestPersistentCompanyRepositoryDelete:
     @pytest.mark.asyncio
     async def test_delete_returns_true_when_found(self, db_session):
