@@ -88,6 +88,7 @@ class YouTubeConnector(BaseConnector):
 
             youtube = build("youtube", "v3", credentials=creds)
             media = MediaFileUpload(str(full_path), chunksize=-1, resumable=True)
+            privacy = action.get("privacy_status", "private")
             request = youtube.videos().insert(
                 part="snippet,status",
                 body={
@@ -96,7 +97,7 @@ class YouTubeConnector(BaseConnector):
                         "description": description,
                         "categoryId": "22",  # People & Blogs default
                     },
-                    "status": {"privacyStatus": "private"},  # safe default
+                    "status": {"privacyStatus": privacy},
                 },
                 media_body=media,
             )
