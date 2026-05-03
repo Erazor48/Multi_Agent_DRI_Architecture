@@ -51,6 +51,8 @@ class ProposeExternalActionTool(BaseTool):
                     "github_push",
                     "github_create_pr",
                     "github_create_repo",
+                    "youtube_upload",
+                    "youtube_create_playlist",
                     "other",
                 ],
                 "description": (
@@ -69,7 +71,13 @@ class ProposeExternalActionTool(BaseTool):
                     "Use 'github_create_pr' to open a pull request "
                     "(recipient=owner/repo, subject=PR_title, content=JSON with head/base/body). "
                     "Use 'github_create_repo' to create a new repository "
-                    "(recipient=org_or_empty, subject=repo_name, content=description)."
+                    "(recipient=org_or_empty, subject=repo_name, content=description). "
+                    "Use 'youtube_upload' to upload a video file to YouTube "
+                    "(recipient=channel_id_or_default, subject=video_title, content=description, "
+                    "file_path=workspace-relative path to the .mp4 file e.g. 'shared/video.mp4'). "
+                    "Video is uploaded as PRIVATE by default — founder controls visibility. "
+                    "Use 'youtube_create_playlist' to create a new YouTube playlist "
+                    "(subject=playlist_title, content=description)."
                 ),
             },
             "recipient": {
@@ -94,12 +102,20 @@ class ProposeExternalActionTool(BaseTool):
                 "type": "string",
                 "description": "Why this action is proposed and what business outcome it targets.",
             },
+            "file_path": {
+                "type": "string",
+                "description": (
+                    "Optional. Workspace-relative path to a file to attach or upload "
+                    "(e.g. 'shared/video.mp4'). Used for action_type='youtube_upload'. "
+                    "Do not set for text-only actions."
+                ),
+            },
         },
         "required": ["action_type", "content", "rationale"],
     }
 
     _VALID_TYPES = frozenset(
-        {"email", "sms", "webhook", "slack_message", "linkedin_message", "social_post", "phone_call", "outreach_message", "bulk_file_delete", "github_push", "github_create_pr", "github_create_repo", "other"}
+        {"email", "sms", "webhook", "slack_message", "linkedin_message", "social_post", "phone_call", "outreach_message", "bulk_file_delete", "github_push", "github_create_pr", "github_create_repo", "youtube_upload", "youtube_create_playlist", "other"}
     )
 
     async def execute(self, raw_input: dict[str, Any]) -> ToolOutput:
@@ -176,6 +192,7 @@ class ProposeExternalActionTool(BaseTool):
             "subject": raw_input.get("subject", ""),
             "content": raw_input.get("content", ""),
             "rationale": raw_input.get("rationale", ""),
+            "file_path": raw_input.get("file_path", ""),
             "proposed_by": agent_title,
             "company": company_name,
             "proposed_at": datetime.now(timezone.utc).isoformat(),

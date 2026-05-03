@@ -556,6 +556,8 @@ Layer 6 (ACTIVE): Company Task History
 - [x] **GitHub connector E2E validated** — `github_create_repo` + `github_push` tested against `Multi-agents-Company` org (2026-05-03). Repo `agence-nextmoderne-docs` created + strategy doc pushed.
 - [x] **`_inventory_shared_files()` Windows backslash fix** — used `str()` instead of `.as_posix()`, causing duplicate paths in synthesis reports (slash vs backslash). Fixed in `base.py`. Also harmonized `_INVENTORY_INFRA_FILES` constant across both inventory methods.
 - [x] **`workspace/momentum/` orphan cleanup** — deleted (no DB record, no `shared/`, non-recoverable Next.js orphan).
+- [x] **Sprint 10** — race condition `_cleanup_wip()` fix, `_plan_org()` exploration, worker reads `shared/` before starting, structured worker missions. 195 passed / 3 skipped.
+- [x] **Sprint 11** — PROGRESS.md instruction in `worker.py`; `manim` allowlist + `manim_video_creation` skill; YouTube connector (`youtube_upload`, `youtube_create_playlist`) with `file_path` field in `propose_external_action`; `google-api-python-client` + `google-auth` deps; `.env.example` YouTube section.
 
 ---
 
@@ -575,11 +577,11 @@ Layer 6 (ACTIVE): Company Task History
 - `_wip/` auto-deleted. `_knowledge/` never deleted. `shared/_company_knowledge.md` is institutional memory.
 - **Memory layers in brief**: active context (base.py _MAX_HISTORY_ROUNDS=12) → role files (_knowledge/) → company KB (shared/_company_knowledge.md) → CEO history summary (company_messages role="summary"). See Memory Architecture section for full detail.
 - **Connectors** (`src/dri/connectors/`): self-register at import. Pattern: `ConnectorRegistry.register(MyConnector())` at module bottom + import in `__init__.py`.
-- **propose_external_action**: `content` must be the full text. `action_type` in `_VALID_TYPES`. Enum: `email`, `webhook`, `linkedin_message`, `social_post`, `sms`, `slack_message`, `phone_call`, `outreach_message`, `bulk_file_delete`, `github_push`, `github_create_pr`, `github_create_repo`, `other`.
+- **propose_external_action**: `content` must be the full text. `action_type` in `_VALID_TYPES`. Enum: `email`, `webhook`, `linkedin_message`, `social_post`, `sms`, `slack_message`, `phone_call`, `outreach_message`, `bulk_file_delete`, `github_push`, `github_create_pr`, `github_create_repo`, `youtube_upload`, `youtube_create_playlist`, `other`.
 - **Approval dispatch**: after founder approves, `cli.py` calls `ConnectorRegistry.get_for(action_type, action)` → executes.
 - **Windows UTF-8**: `cli.py` sets `sys.stdout` to UTF-8 + `Console(legacy_windows=False)`.
 - **Provider**: Gemini via Vertex AI. Workers = gemini-2.5-flash. CEO = gemini-2.5-pro.
-- **Tests**: `uv run pytest tests/ -q` must stay at **186 passed / 3 skipped** before any commit. The webhook live test skips on HTTP 429 (external rate limit) — this is expected.
+- **Tests**: `uv run pytest tests/ -q` must stay at **195 passed / 3 skipped** before any commit. The webhook live test skips on HTTP 429 (external rate limit) — this is expected.
 - **Slug normalization**: always use `_slug()` in `cli.py` or `_company_slug()` in `company_executor.py` — both use NFD normalization for French accents. Never use plain `re.sub(r'[^a-z0-9]+', '-', name.lower())` directly.
 
 ### Real-world test to run (requested by founder, 2026-05-01)

@@ -100,6 +100,15 @@ class Settings(BaseSettings):
     def has_github(self) -> bool:
         return bool(self.github_token)
 
+    # ── YouTube connector ─────────────────────────────────────────────────
+    youtube_client_id: str = Field("", alias="YOUTUBE_CLIENT_ID")
+    youtube_client_secret: str = Field("", alias="YOUTUBE_CLIENT_SECRET")
+    youtube_refresh_token: str = Field("", alias="YOUTUBE_REFRESH_TOKEN")
+
+    @property
+    def has_youtube(self) -> bool:
+        return bool(self.youtube_client_id and self.youtube_client_secret and self.youtube_refresh_token)
+
     # ── Email connector (SMTP) ────────────────────────────────────────────
     smtp_host: str = Field("", description="SMTP server host (e.g. smtp.gmail.com)")
     smtp_port: int = Field(587, description="SMTP port: 587=STARTTLS (default), 465=SSL, 25=plain")
