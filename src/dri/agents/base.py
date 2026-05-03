@@ -537,8 +537,13 @@ class BaseAgent(ABC):
         "node_modules", ".next", ".git", "__pycache__", ".venv", "venv", "dist", "build", ".cache",
     })
 
+    _INVENTORY_INFRA_FILES = frozenset({
+        "_audit.log", "_pending_approvals.json",
+        "_company_history.md", "_company_knowledge.md",
+    })
+
     def _inventory_shared_files(self) -> list[str]:
-        """List files in shared/ — readable by all agents, used to ground synthesis reports."""
+        """List deliverable files in shared/ — excludes infra/system files."""
         if not self._ctx.workspace_root:
             return []
         shared_dir = Path(self._ctx.workspace_root) / "shared"
@@ -546,9 +551,13 @@ class BaseAgent(ABC):
             return []
         root = Path(self._ctx.workspace_root)
         return sorted(
-            str(f.relative_to(root))
+            f.relative_to(root).as_posix()
             for f in shared_dir.rglob("*")
-            if f.is_file() and not any(p in self._INVENTORY_SKIP_DIRS for p in f.parts)
+            if (
+                f.is_file()
+                and f.name not in self._INVENTORY_INFRA_FILES
+                and not any(p in self._INVENTORY_SKIP_DIRS for p in f.parts)
+            )
         )
 
     def _inventory_dept_files(self) -> list[str]:
@@ -562,14 +571,13 @@ class BaseAgent(ABC):
         if not self._ctx.workspace_root:
             return []
         root = Path(self._ctx.workspace_root)
-        _INFRA_FILES = {"_audit.log", "_pending_approvals.json"}
 
         def _keep(f: Path) -> bool:
             return (
                 f.is_file()
                 and "_wip" not in f.parts
                 and "_knowledge" not in f.parts
-                and f.name not in _INFRA_FILES
+                and f.name not in self._INVENTORY_INFRA_FILES
                 and not any(p in self._INVENTORY_SKIP_DIRS for p in f.parts)
             )
 
