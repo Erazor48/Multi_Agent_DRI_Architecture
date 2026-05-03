@@ -35,6 +35,8 @@ _ALLOWED_EXECUTABLES: frozenset[str] = frozenset({
     "magick", "convert",
     # HTTP requests — read-only, no system writes
     "curl", "wget",
+    # Video animation rendering
+    "manim",
 })
 
 # Git subcommands that destroy working-tree content unconditionally.

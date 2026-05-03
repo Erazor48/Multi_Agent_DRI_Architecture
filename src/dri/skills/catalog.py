@@ -186,6 +186,38 @@ class SkillCatalog:
             ),
             required_tools=["shell_exec", "file_write", "file_read", "file_list"],
         ),
+        # ── Video ────────────────────────────────────────────
+        "manim_video_creation": Skill(
+            name="Manim Video Creation",
+            description="Create animated videos using the Manim Python library.",
+            instructions=(
+                "## What is Manim\n"
+                "Manim (Mathematical Animation Engine) creates smooth animated videos from Python scripts. "
+                "Output format: MP4. Used for explainer videos, data visualizations, marketing animations.\n\n"
+                "## Installation (if not installed)\n"
+                "```\nuv pip install manim\n```\n\n"
+                "## Write a Manim script\n"
+                "Create a Python file in `<dept>/_wip/` with one or more Scene classes:\n"
+                "```python\nfrom manim import *\n\nclass MyScene(Scene):\n"
+                "    def construct(self):\n"
+                "        text = Text('Hello World')\n"
+                "        self.play(Write(text))\n"
+                "        self.wait(2)\n"
+                "```\n\n"
+                "## Render the video\n"
+                "```\nmanim render <dept>/_wip/script.py MyScene --format mp4 -o output\n```\n"
+                "Output lands in `media/videos/<script>/1080p60/MyScene.mp4` relative to cwd.\n"
+                "Copy the final MP4 to `shared/<video-name>.mp4` with file_write or shell cp.\n\n"
+                "## Key rules\n"
+                "- ALWAYS render with `--format mp4`. Never use default GIF output.\n"
+                "- Test with a low-quality flag first: `-ql` (low quality, fast render) to validate.\n"
+                "- Full quality: `-qh` (1080p) or `-qm` (720p).\n"
+                "- The final MP4 MUST be saved to `shared/` before reporting done.\n"
+                "- Cite the exact file path in your report: `shared/<video-name>.mp4`.\n"
+                "- Common error: missing `self.wait()` at the end — always add it.\n"
+            ),
+            required_tools=["shell_exec", "file_write", "file_list"],
+        ),
         # ── Finance ──────────────────────────────────────────
         "financial_modeling": Skill(
             name="Financial Modeling",
