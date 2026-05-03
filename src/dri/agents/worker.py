@@ -21,7 +21,11 @@ class WorkerAgent(BaseAgent):
                 "content": (
                     f"## Your Task\n\n{task.description}"
                     + (f"\n\n## Context\n\n{task.context}" if task.context else "")
-                    + "\n\nExecute this task completely. Use your available tools as needed.\n\n"
+                    + "\n\n**Before doing anything else:**\n"
+                    "1. Call `file_list` on `shared/` to see what deliverables already exist.\n"
+                    "2. If relevant files exist for your task, read them with `file_read` before starting.\n"
+                    "3. Build on existing work — do not redo it.\n\n"
+                    "Execute this task completely. Use your available tools as needed.\n\n"
                     "**Before writing your final report:**\n"
                     "1. Call `file_list` on your department folder to see what files you actually produced.\n"
                     "2. Only cite files confirmed to exist on disk.\n"

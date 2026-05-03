@@ -1021,7 +1021,15 @@ async def _run_task_force(
             "intermediate drafts — never for final output. Only deviate from `shared/` if this "
             "specific task explicitly requests dept-specific output.'\n"
             "A worker that saves a final file to its dept root instead of `shared/` has violated "
-            "this rule. Note the violation in your synthesis report and propose moving the file."
+            "this rule. Note the violation in your synthesis report and propose moving the file.\n\n"
+            "## Structured mission format — required for every worker\n"
+            "Each worker mission you write MUST follow this structure:\n"
+            "  1. **Role + context** — who they are and what they need to know\n"
+            "  2. **Exact task** — what to produce (be specific)\n"
+            "  3. **Deliverable path** — 'Save the final result to `shared/<specific-filename.ext>`'\n"
+            "  4. **Done criteria** — 3-5 bullet points defining a complete, quality deliverable\n"
+            "  5. **Do NOT redo** — list any existing files they must read and build upon\n"
+            "Missions without a deliverable path or done criteria will produce ambiguous output."
         ),
         parent_id=None,
         depth=0,
