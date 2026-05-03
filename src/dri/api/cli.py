@@ -48,7 +48,7 @@ def _print_banner() -> None:
     console.print()
 
 
-def _render_progress_panel(lines: list[str]) -> Panel:
+def _render_progress_panel(lines: list[str], title: str = "Team Activity") -> Panel:
     """Render agent tool-call activity as a color-coded live panel with spinner."""
     from rich.console import Group as RichGroup
     from rich.spinner import Spinner
@@ -57,7 +57,7 @@ def _render_progress_panel(lines: list[str]) -> Panel:
     spinner = Spinner("dots", text=f"  {latest}", style="bold blue")
 
     if len(lines) <= 1:
-        return Panel(spinner, title="[bold]Team Activity[/bold]", border_style="blue", padding=(0, 1))
+        return Panel(spinner, title=f"[bold]{title}[/bold]", border_style="blue", padding=(0, 1))
 
     history = Text()
     for line in lines[-9:-1]:
@@ -71,7 +71,7 @@ def _render_progress_panel(lines: list[str]) -> Panel:
             history.append(f"  {line}\n", style="bold blue")
         else:
             history.append(f"  {line}\n", style="dim")
-    return Panel(RichGroup(history, spinner), title="[bold]Team Activity[/bold]", border_style="blue", padding=(0, 1))
+    return Panel(RichGroup(history, spinner), title=f"[bold]{title}[/bold]", border_style="blue", padding=(0, 1))
 
 
 def _print_result(result: str) -> None:
@@ -394,10 +394,14 @@ def company_chat(
                 continue
 
             _prog_lines: list[str] = []
-            with Live(_render_progress_panel([]), console=console, refresh_per_second=4, transient=True) as live:
+            _panel_title = ["CEO"]
+            _TEAM_KEYWORDS = ("Spawn", "Synthesiz", "Exploring workspace", "Designing team", "agent(s)")
+            with Live(_render_progress_panel([], title="CEO"), console=console, refresh_per_second=4, transient=True) as live:
                 def _upd(m: str) -> None:
                     _prog_lines.append(m)
-                    live.update(_render_progress_panel(_prog_lines))
+                    if _panel_title[0] == "CEO" and any(kw in m for kw in _TEAM_KEYWORDS):
+                        _panel_title[0] = "Team Activity"
+                    live.update(_render_progress_panel(_prog_lines, title=_panel_title[0]))
 
                 try:
                     reply = await CompanyExecutor.chat(cid, user_input, on_status=_upd)
@@ -1141,6 +1145,136 @@ def company_files(
 
     console.print(tree)
     console.print(f"\n[dim]{total} file(s) in workspace[/dim]\n")
+
+
+@company_app.command("status")
+def company_status(
+    company_id: str = typer.Option("", "--id", help="Company ID (uses active/latest if omitted)"),
+) -> None:
+    """Show a snapshot of the company's current state: org, pending approvals, recent tasks, team."""
+    from pathlib import Path
+    from rich.table import Table
+
+    async def _run():
+        from dri.config.settings import get_settings
+        from dri.storage.database import init_db, get_session
+        from dri.storage.repositories import CompanyAgentRepository
+
+        c = await _resolve_company(company_id)
+        if c is None:
+            return None, [], [], "", 0
+
+        await init_db()
+        async with get_session() as db:
+            repo = CompanyAgentRepository(db)
+            agents = await repo.list_active(c.id)
+
+        ws_root = Path(get_settings().workspace_dir) / _slug(c.name)
+
+        # Pending approvals
+        pending_path = ws_root / "shared" / "_pending_approvals.json"
+        pending_count = 0
+        if pending_path.exists():
+            import json
+            try:
+                actions = json.loads(pending_path.read_text(encoding="utf-8"))
+                pending_count = sum(1 for a in actions if a.get("status") == "pending")
+            except Exception:
+                pass
+
+        # Recent history (last ~1200 chars of _company_history.md)
+        history_lines: list[str] = []
+        history_path = ws_root / "shared" / "_company_history.md"
+        if history_path.exists():
+            raw = history_path.read_text(encoding="utf-8")
+            # Each entry starts with "##"
+            entries = [e.strip() for e in raw.split("\n## ") if e.strip()]
+            history_lines = entries[-3:]  # last 3 entries
+
+        # Workspace file count (shallow: skip node_modules / .next)
+        _SKIP = {"node_modules", ".next", "__pycache__", ".git"}
+        file_count = 0
+        if ws_root.exists():
+            for p in ws_root.rglob("*"):
+                if any(skip in p.parts for skip in _SKIP):
+                    continue
+                if p.is_file():
+                    file_count += 1
+
+        return c, agents, history_lines, str(ws_root), pending_count
+
+    company, agents, history_lines, ws_root, pending_count = asyncio.run(_run())
+
+    if company is None:
+        console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
+        raise typer.Exit(1)
+
+    console.print()
+
+    # ── Company overview ──────────────────────────────────────────────────────
+    dept_lines = "\n".join(f"  • {d['title']}" for d in company.org_structure)
+    pending_str = (
+        f"[yellow]{pending_count} pending[/yellow]" if pending_count else "[dim]none[/dim]"
+    )
+    console.print(Panel(
+        f"[bold]{company.name}[/bold]  [dim]{company.id[:8]}...[/dim]\n"
+        f"[dim]{company.vision[:120]}[/dim]\n\n"
+        f"[bold]Departments ({len(company.org_structure)}):[/bold]\n{dept_lines}\n\n"
+        f"[bold]Pending approvals:[/bold] {pending_str}   "
+        f"[bold]Workspace files:[/bold] {ws_root}  ({file_count} files)",
+        title="[bold blue]Company Status[/bold blue]",
+        border_style="blue",
+    ))
+
+    # ── Team table ────────────────────────────────────────────────────────────
+    if agents:
+        table = Table(title="Team", show_lines=False, box=None, padding=(0, 2))
+        table.add_column("Title", style="bold")
+        table.add_column("Role", style="dim", width=10)
+        table.add_column("Tasks", justify="right", width=7)
+        table.add_column("Rate", justify="right", width=7)
+        table.add_column("Last Active", style="dim", width=17)
+
+        for a in agents:
+            rate = f"{a.success_rate:.0%}"
+            rate_color = "green" if a.success_rate >= 0.8 else ("yellow" if a.success_rate >= 0.5 else "red")
+            table.add_row(
+                a.title,
+                a.role,
+                str(a.task_count),
+                f"[{rate_color}]{rate}[/{rate_color}]",
+                a.last_active_at.strftime("%Y-%m-%d %H:%M"),
+            )
+        console.print(table)
+    else:
+        console.print("[dim]No team members yet. Run a task to populate.[/dim]")
+
+    # ── Recent task history ───────────────────────────────────────────────────
+    if history_lines:
+        console.print()
+        console.print("[bold]Recent Tasks:[/bold]")
+        for entry in history_lines:
+            # First line of entry is the header; rest is body
+            entry_lines = entry.splitlines()
+            header = entry_lines[0].lstrip("# ").strip()
+            body = "\n".join(entry_lines[1:]).strip()
+            console.print(f"  [cyan]▸[/cyan] [bold]{header}[/bold]")
+            if body:
+                # Show at most 2 lines of body
+                body_lines = [l for l in body.splitlines() if l.strip()][:2]
+                for bl in body_lines:
+                    console.print(f"    [dim]{bl[:100]}[/dim]")
+    else:
+        console.print("[dim]No task history yet.[/dim]")
+
+    console.print()
+    console.print(
+        "[dim]Commands: [bold]dri company chat[/bold] | "
+        "[bold]dri company approvals list[/bold] | "
+        "[bold]dri company team list[/bold] | "
+        "[bold]dri company files[/bold][/dim]"
+    )
+    console.print()
 
 
 @company_app.command("decommission")
