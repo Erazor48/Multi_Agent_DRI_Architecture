@@ -492,12 +492,20 @@ class BaseAgent(ABC):
         if not self._ctx.workspace_root:
             return
         root = Path(self._ctx.workspace_root)
-        # Full workspace access — clean every _wip/ dir (safe: called after all children finish)
         for perm in self._ctx.workspace_permissions:
             if perm.path == "" and perm.can_write and perm.can_delete:
-                for wip_dir in sorted(root.rglob("_wip"), reverse=True):
-                    if wip_dir.is_dir():
-                        shutil.rmtree(str(wip_dir), ignore_errors=True)
+                if self._ctx.memory_dept:
+                    # Task-force worker: memory_dept is set — clean only own dept's _wip/
+                    # to avoid deleting sibling workers' in-progress files (race condition).
+                    dept_wip = root / self._ctx.memory_dept.rstrip("/") / "_wip"
+                    if dept_wip.exists() and dept_wip.is_dir():
+                        shutil.rmtree(str(dept_wip), ignore_errors=True)
+                else:
+                    # Synthesizer/manager: no memory_dept → runs after all workers done.
+                    # Safe to clean every _wip/ in the workspace.
+                    for wip_dir in sorted(root.rglob("_wip"), reverse=True):
+                        if wip_dir.is_dir():
+                            shutil.rmtree(str(wip_dir), ignore_errors=True)
                 return
         # Normal RBAC — clean own department _wip/ only
         own_dept: str | None = None
