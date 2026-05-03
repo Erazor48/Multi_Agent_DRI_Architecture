@@ -109,6 +109,17 @@ class Settings(BaseSettings):
     def has_youtube(self) -> bool:
         return bool(self.youtube_client_id and self.youtube_client_secret and self.youtube_refresh_token)
 
+    # ── Google Cloud TTS ──────────────────────────────────────────────────
+    google_tts_language: str = Field("fr-FR", alias="GOOGLE_TTS_LANGUAGE")
+    google_tts_voice: str = Field("fr-FR-Neural2-A", alias="GOOGLE_TTS_VOICE")
+
+    @property
+    def has_tts(self) -> bool:
+        if self.google_application_credentials:
+            from pathlib import Path
+            return Path(self.google_application_credentials).exists()
+        return False
+
     # ── Email connector (SMTP) ────────────────────────────────────────────
     smtp_host: str = Field("", description="SMTP server host (e.g. smtp.gmail.com)")
     smtp_port: int = Field(587, description="SMTP port: 587=STARTTLS (default), 465=SSL, 25=plain")
