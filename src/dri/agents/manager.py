@@ -22,6 +22,7 @@ from dri.agents.base import BaseAgent
 from dri.config.settings import settings
 from dri.core.models import AgentRole, AgentStatus, SpawnRequest, Task, TaskStatus
 from dri.skills.catalog import SkillCatalog
+from dri.tools.base import ToolRegistry
 
 if TYPE_CHECKING:
     from dri.orchestration.spawner import Spawner
@@ -268,20 +269,74 @@ class ManagerAgent(BaseAgent):
         worker_titles = [req.title for req, _ in spawn_requests]
         return await self._synthesize(task, results_text, synthesis_approach, worker_titles)
 
+    async def _explore_for_planning(self, task: Task) -> str:
+        """
+        Mini exploration loop (max 3 rounds, file_list + file_read only).
+        Returns a text summary of workspace state to feed into _plan_org.
+        """
+        file_tool_names = [t for t in ["file_list", "file_read"] if t in set(self._ctx.allowed_tools or [])]
+        if not file_tool_names:
+            return ""
+        exploration_specs = ToolRegistry.to_claude_specs(file_tool_names)
+        if not exploration_specs:
+            return ""
+
+        explore_msg = (
+            f"## Objective (for context — do NOT plan yet)\n\n{task.description}"
+            + (f"\n\n## Workspace snapshot\n\n{task.context}" if task.context else "")
+            + "\n\nBefore designing your team, explore the workspace:\n"
+            "1. Call `file_list` on the workspace root (\"\") to see what already exists.\n"
+            "2. If you find files directly relevant to this task, read 2-3 of them with `file_read`.\n"
+            "3. Return a brief summary: what exists and is complete, what remains to build or update."
+        )
+        messages: list[dict] = [{"role": "user", "content": explore_msg}]
+
+        for _ in range(3):
+            response = await self._call_llm(messages, tools=exploration_specs)
+            messages.append(response.to_assistant_message())
+            if not response.has_tool_calls:
+                return response.text
+            tool_results = await asyncio.gather(
+                *[self._execute_tool(tc, task.id) for tc in response.tool_calls]
+            )
+            messages.append({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_call_id": r["tool_call_id"],
+                        "tool_name": r.get("tool_name", ""),
+                        "content": r["content"],
+                    }
+                    for r in tool_results
+                ],
+            })
+
+        # After 3 rounds still no text — ask for a summary
+        messages.append({"role": "user", "content": "Summarize your exploration findings briefly."})
+        response = await self._call_llm(messages, tools=None)
+        return response.text
+
     async def _plan_org(self, task: Task) -> dict | None:
         """
         Ask the LLM to produce an org plan via tool call.
-        Retries once with a stricter prompt if the LLM responds with text instead of a tool call.
+
+        Phase 1: explore the workspace (file_list + file_read, max 3 rounds).
+        Phase 2: design the team with create_org_plan, informed by exploration.
+        Retries once with a stricter prompt if LLM responds with text instead of a tool call.
         """
+        exploration_summary = await self._explore_for_planning(task)
+
         base_content = (
             f"## Your Objective\n\n{task.description}"
             + (f"\n\n## Context\n\n{task.context}" if task.context else "")
+            + (f"\n\n## Workspace Exploration Results\n\n{exploration_summary}" if exploration_summary else "")
         )
         prompts = [
             base_content + (
                 "\n\nAnalyze this objective. Design your team by calling `create_org_plan`. "
-                "Assign clear, non-overlapping missions. Choose worker for atomic tasks, "
-                "manager for complex subtasks that need their own team."
+                "Assign clear, non-overlapping missions. Build on existing work — do not redo it. "
+                "Choose worker for atomic tasks, manager for complex subtasks that need their own team."
             ),
             base_content + (
                 "\n\n**You MUST call `create_org_plan` now.** Do not write a plan in text — "
