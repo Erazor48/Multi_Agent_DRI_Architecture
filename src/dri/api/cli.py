@@ -833,8 +833,8 @@ def team_show(
 
     console.print()
     console.print(Panel(
-        f"[bold]Title:[/bold] {agent.title}\n"
-        f"[bold]Role:[/bold] {agent.role}\n"
+        f"[bold]Title:[/bold] {_e(agent.title)}\n"
+        f"[bold]Role:[/bold] {_e(agent.role)}\n"
         f"[bold]Status:[/bold] {agent.status}\n"
         f"[bold]Tasks run:[/bold] {agent.task_count}  "
         f"[bold]Succeeded:[/bold] {agent.success_count}  "
@@ -842,11 +842,42 @@ def team_show(
         f"[bold]Token budget:[/bold] {agent.token_budget:,} (0 = system default)\n"
         f"[bold]Last active:[/bold] {agent.last_active_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
         f"[bold]Joined:[/bold] {agent.created_at.strftime('%Y-%m-%d')}\n\n"
-        f"[bold]Notes:[/bold]\n{agent.notes or '(none)'}\n\n"
+        f"[bold]Notes:[/bold]\n{_e(agent.notes or '(none)')}\n\n"
         f"[bold]Persistent memory path:[/bold]\n[dim]{knowledge_path}[/dim]",
-        title=f"[bold]{agent.title}[/bold]",
+        title=f"[bold]{_e(agent.title)}[/bold]",
         border_style="blue",
     ))
+
+    # ── Recent missions from _company_history.md ──────────────────────────────
+    from pathlib import Path as _Path
+    history_file = _Path("workspace") / _slug(company.name) / "shared" / "_company_history.md"
+    if history_file.exists():
+        raw = history_file.read_text(encoding="utf-8", errors="replace")
+        entries = [e.strip() for e in raw.split("\n## ") if e.strip()]
+        # keep entries where the agent's title appears in the Team line
+        agent_entries = [e for e in entries if agent.title in e]
+        agent_entries = agent_entries[-5:]  # last 5
+        if agent_entries:
+            console.print("[bold]Recent missions:[/bold]")
+            for entry in reversed(agent_entries):
+                lines = entry.splitlines()
+                header = lines[0].lstrip("# ").strip()
+                meta = {
+                    k.strip(): v.strip()
+                    for line in lines[1:]
+                    if ": " in line
+                    for k, v in [line.lstrip("- ").split(": ", 1)]
+                }
+                outcome = meta.get("Outcome", "?")
+                outcome_color = "green" if outcome.startswith("DONE") else ("yellow" if "PARTIAL" in outcome else "red")
+                console.print(
+                    f"  [cyan]▸[/cyan] [bold]{_e(header)}[/bold]  "
+                    f"[{outcome_color}]{_e(outcome)}[/{outcome_color}]  "
+                    f"[dim]{meta.get('Duration', '')}  {meta.get('Tokens', '')} tok[/dim]"
+                )
+        else:
+            console.print("[dim]No missions recorded for this agent yet.[/dim]")
+
     console.print()
 
 
@@ -1278,7 +1309,7 @@ def company_status(
 
         c = await _resolve_company(company_id)
         if c is None:
-            return None, [], [], "", 0, 0, False
+            return None, [], [], "", 0, 0, []
 
         await init_db()
         async with get_session() as db:
@@ -1306,15 +1337,16 @@ def company_status(
             entries = [e.strip() for e in raw.split("\n## ") if e.strip()]
             history_lines = entries[-3:]
 
-        # WIP detection — any _wip/ dir with at least one file → task is running
-        task_running = False
+        # WIP detection — collect dept slugs that have at least one file in _wip/
+        active_wip_depts: list[str] = []
         if ws_root.exists():
             for wip_dir in ws_root.rglob("_wip"):
                 if wip_dir.is_dir():
                     try:
                         next(wip_dir.iterdir())
-                        task_running = True
-                        break
+                        dept_slug = wip_dir.parent.name
+                        if dept_slug not in active_wip_depts:
+                            active_wip_depts.append(dept_slug)
                     except StopIteration:
                         pass
 
@@ -1328,15 +1360,19 @@ def company_status(
                 if p.is_file():
                     file_count += 1
 
-        return c, agents, history_lines, str(ws_root), pending_count, file_count, task_running
+        return c, agents, history_lines, str(ws_root), pending_count, file_count, active_wip_depts
 
-    def _render(company, agents, history_lines, ws_root, pending_count, file_count, task_running, *, next_refresh: int | None = None) -> RichGroup:
+    def _render(company, agents, history_lines, ws_root, pending_count, file_count, active_wip_depts, *, next_refresh: int | None = None) -> RichGroup:
         parts: list = []
 
         # ── Overview panel ────────────────────────────────────────────────────
         dept_lines = "\n".join(f"  • {_e(d['title'])}" for d in company.org_structure)
         pending_str = f"[yellow]{pending_count} pending[/yellow]" if pending_count else "[dim]none[/dim]"
-        wip_str = "[bold green]● Task running[/bold green]" if task_running else "[dim]○ Idle[/dim]"
+        if active_wip_depts:
+            depts_label = ", ".join(_e(d) for d in active_wip_depts[:3])
+            wip_str = f"[bold green]● {depts_label} in progress[/bold green]"
+        else:
+            wip_str = "[dim]○ Idle[/dim]"
         footer = ""
         if next_refresh is not None:
             ts = datetime.now().strftime("%H:%M:%S")

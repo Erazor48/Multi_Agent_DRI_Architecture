@@ -471,7 +471,7 @@ Layer 5 (ACTIVE): Persistent Agent Identities
   Written by: _run_task_force() after every task force — all registry nodes recorded.
   CLI: dri company team list / show / note / remove / promote
   Enables: performance tracking, success rate, custom budget, soft-delete.
-  Note: token_budget stored but not yet applied at spawn time (future iteration).
+  Note: token_budget applied at spawn time via `Spawner._budget_overrides` (Gap 3 fix, Sprint 4).
 
 Layer 6 (ACTIVE): Company Task History
   File: shared/_company_history.md
@@ -582,6 +582,7 @@ Layer 6 (ACTIVE): Company Task History
 - [x] **Sprint 12** (2026-05-09) — P1: `CompanyExecutor.task()` routes through CEO via `[DIRECT TASK]` marker (CEO-aware, coherent history). P3: structured error log (`shared/_errors.jsonl`) + `dri company errors` CLI. P4: timing + cost estimate in `_company_history.md` + `dri company budget` cost column. P5: KB truncation limits raised (3000→6000 in executor, 1500→4000 for all roles in memory.py, worker/manager distinction removed). P1 side-effect: `[DIRECT TASK]` marker stripped before DB persistence so chat history stays clean.
 - [x] **Sprint 13** (2026-05-09) — P2: `dri company status --watch` polling mode (`--interval`, WIP detection, countdown footer, `_fetch()`/`_render()` extracted). Fix: `company_delete` now uses `_resolve_company()` → prefix support. Internship Gateway test company deleted.
 - [x] **Sprint 14** (2026-05-09) — P2: `dri company team list --limit N --role <role>` pagination + footer. P3: `rich.markup.escape()` on all user-provided strings in CLI panels/tables (fixes French accent truncation). P4: `dri company use <name>` already implemented (state.py + company_use command confirmed). 200 passed / 3 skipped.
+- [x] **Sprint 15** (2026-05-09) — P2: `dri company team show` adds "Recent missions" section (parses `_company_history.md`, filters by agent title, shows last 5). P3: `--watch` WIP indicator now shows active dept slugs ("● chief-marketing-officer in progress") instead of generic "Task running". P4: confirmed `token_budget` already fully wired at spawn time (Gap 3 fix Sprint 4) — removed stale CLAUDE.md note. 200 passed / 3 skipped.
 
 ---
 
