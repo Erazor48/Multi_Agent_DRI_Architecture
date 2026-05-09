@@ -360,6 +360,20 @@ uv run dri company list
 uv run dri company chat --id <ID>
 uv run dri company task --task "Produce a market analysis report"
 uv run dri company decommission "Chief Marketing Officer" --archive
+uv run dri company delete --id <ID>             # delete company + workspace
+uv run dri company delete --id <ID> --archive   # archive workspace before delete
+uv run dri company recover                      # re-import orphan workspaces
+
+# Workspace inspection
+uv run dri company files --id <ID>              # file tree with sizes
+uv run dri company files --id <ID> --dept "CTO" # filter by department
+
+# Budget & cost
+uv run dri company budget --id <ID>             # token usage + cost estimate per task
+
+# Error log
+uv run dri company errors --id <ID>             # FAILED/PARTIAL task force log
+uv run dri company errors --id <ID> --limit 5
 
 # External action approvals
 uv run dri company approvals list
@@ -367,6 +381,13 @@ uv run dri company approvals list --all          # include decided actions
 uv run dri company approvals show <N>
 uv run dri company approvals approve <N> --note "OK"
 uv run dri company approvals reject <N> --note "Reformulate first"
+
+# Agent team (Layer 5)
+uv run dri company team list --id <ID>
+uv run dri company team show --id <ID> --agent "SEO Specialist"
+uv run dri company team note --id <ID> --agent "SEO Specialist" --note "Avoid keyword stuffing"
+uv run dri company team promote --id <ID> --agent "SEO Specialist" --budget 50000
+uv run dri company team remove --id <ID> --agent "SEO Specialist"
 ```
 
 Full reference: `docs/CLI/reference.md`
@@ -558,14 +579,14 @@ Layer 6 (ACTIVE): Company Task History
 - [x] **`workspace/momentum/` orphan cleanup** — deleted (no DB record, no `shared/`, non-recoverable Next.js orphan).
 - [x] **Sprint 10** — race condition `_cleanup_wip()` fix, `_plan_org()` exploration, worker reads `shared/` before starting, structured worker missions. 195 passed / 3 skipped.
 - [x] **Sprint 11** — PROGRESS.md instruction in `worker.py`; `manim` allowlist + `manim_video_creation` skill; YouTube connector (`youtube_upload`, `youtube_create_playlist`) with `file_path` field in `propose_external_action`; `google-api-python-client` + `google-auth` deps; `.env.example` YouTube section.
+- [x] **Sprint 12** (2026-05-09) — P1: `CompanyExecutor.task()` routes through CEO via `[DIRECT TASK]` marker (CEO-aware, coherent history). P3: structured error log (`shared/_errors.jsonl`) + `dri company errors` CLI. P4: timing + cost estimate in `_company_history.md` + `dri company budget` cost column. P5: KB truncation limits raised (3000→6000 in executor, 1500→4000 for all roles in memory.py, worker/manager distinction removed). P1 side-effect: `[DIRECT TASK]` marker stripped before DB persistence so chat history stays clean.
 
 ---
 
 ## Notes for the Next Agent
 
 - **Read the full file before touching anything. Especially the Memory Architecture section.**
-- Active companies (as of 2026-05-03): **Agence NextModerne** and **Zenith**.
-  `workspace/momentum/` has been deleted (orphan, no DB record, no `shared/`).
+- Active companies (as of 2026-05-09): **Agence NextModerne**, **Zenith**, and **Internship Gateway** (test company, suppressible).
   Use `uv run dri company list` to confirm current state.
 - **LangGraph is NOT used** despite being in the architecture table. `graph.py` is a skeleton.
   Don't add LangGraph code without user approval.
@@ -581,7 +602,7 @@ Layer 6 (ACTIVE): Company Task History
 - **Approval dispatch**: after founder approves, `cli.py` calls `ConnectorRegistry.get_for(action_type, action)` → executes.
 - **Windows UTF-8**: `cli.py` sets `sys.stdout` to UTF-8 + `Console(legacy_windows=False)`.
 - **Provider**: Gemini via Vertex AI. Workers = gemini-2.5-flash. CEO = gemini-2.5-pro.
-- **Tests**: `uv run pytest tests/ -q` must stay at **195 passed / 3 skipped** before any commit. The webhook live test skips on HTTP 429 (external rate limit) — this is expected.
+- **Tests**: `uv run pytest tests/ -q` must stay at **200 passed / 3 skipped** before any commit. The webhook live test skips on HTTP 429 (external rate limit) — this is expected.
 - **Slug normalization**: always use `_slug()` in `cli.py` or `_company_slug()` in `company_executor.py` — both use NFD normalization for French accents. Never use plain `re.sub(r'[^a-z0-9]+', '-', name.lower())` directly.
 
 ### Real-world test to run (requested by founder, 2026-05-01)

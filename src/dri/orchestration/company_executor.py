@@ -465,11 +465,12 @@ class CompanyExecutor:
 
         llm_messages = _build_ceo_messages(history, user_message)
 
-        # Save user message
+        # Save user message — strip internal routing markers before persisting
+        display_message = re.sub(r'^\[DIRECT TASK[^\]]*\]\s*\n*', '', user_message).strip()
         async with get_session() as db:
             msg_repo = CompanyMessageRepository(db)
             await msg_repo.add(CompanyMessage(
-                company_id=company_id, role="user", content=user_message
+                company_id=company_id, role="user", content=display_message
             ))
 
         provider = create_provider()
@@ -980,7 +981,7 @@ async def _run_task_force(
         try:
             _kb_content = _kb_path.read_text(encoding="utf-8").strip()
             if _kb_content:
-                _company_kb_raw = _kb_content[:3000]
+                _company_kb_raw = _kb_content[:6000]
                 _company_kb = f"\n\n## Company Knowledge Base\n{_company_kb_raw}"
         except OSError:
             pass

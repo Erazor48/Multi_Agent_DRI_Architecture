@@ -160,12 +160,12 @@ class ContextPacket:
 
         if self.company_kb:
             lines.append("\n## Company Knowledge Base\n")
-            kb = self.company_kb[:1500] + "\n[...truncated]" if is_worker and len(self.company_kb) > 1500 else self.company_kb
+            kb = self.company_kb[:4000] + "\n[...truncated]" if len(self.company_kb) > 4000 else self.company_kb
             lines.append(kb)
 
         if self.company_history_snippet:
             lines.append("\n## Company Task History (recent)\n")
-            hist = self.company_history_snippet[:1000] + "\n[...truncated]" if is_worker and len(self.company_history_snippet) > 1000 else self.company_history_snippet
+            hist = self.company_history_snippet[:2000] + "\n[...truncated]" if len(self.company_history_snippet) > 2000 else self.company_history_snippet
             lines.append(hist)
 
         if self.skills:

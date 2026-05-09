@@ -202,29 +202,35 @@ def test_worker_prompt_shorter_than_manager():
     )
 
 
-def test_worker_kb_truncated_at_1500():
-    """Workers see at most 1500 chars of the company KB (truncation marker present)."""
-    long_kb = "K" * 3000
-    worker_packet = ContextBuilder.build(
-        child_config=_make_config(AgentRole.WORKER),
-        parent_title="CTO",
-        company_name="TestCo",
-        company_pitch="test",
-        company_kb=long_kb,
-    )
-    prompt = worker_packet.to_system_prompt()
-    assert "[...truncated]" in prompt, "Worker KB should include truncation marker"
+def test_kb_truncated_at_4000_for_all_roles():
+    """KB over 4000 chars is truncated for both workers and managers."""
+    long_kb = "K" * 5000
+    for role in (AgentRole.WORKER, AgentRole.MANAGER):
+        parent = "CEO" if role == AgentRole.MANAGER else "CTO"
+        packet = ContextBuilder.build(
+            child_config=_make_config(role),
+            parent_title=parent,
+            company_name="TestCo",
+            company_pitch="test",
+            company_kb=long_kb,
+        )
+        prompt = packet.to_system_prompt()
+        assert "[...truncated]" in prompt, f"{role} KB should include truncation marker"
+        assert long_kb not in prompt, f"{role} full KB should not appear (should be truncated)"
 
 
-def test_manager_kb_not_truncated():
-    """Managers receive the full KB without truncation."""
+def test_kb_under_4000_not_truncated():
+    """KB under 4000 chars is never truncated, regardless of role."""
     long_kb = "K" * 3000
-    manager_packet = ContextBuilder.build(
-        child_config=_make_config(AgentRole.MANAGER),
-        parent_title="CEO",
-        company_name="TestCo",
-        company_pitch="test",
-        company_kb=long_kb,
-    )
-    prompt = manager_packet.to_system_prompt()
-    assert prompt.count("K") >= 3000
+    for role in (AgentRole.WORKER, AgentRole.MANAGER):
+        parent = "CEO" if role == AgentRole.MANAGER else "CTO"
+        packet = ContextBuilder.build(
+            child_config=_make_config(role),
+            parent_title=parent,
+            company_name="TestCo",
+            company_pitch="test",
+            company_kb=long_kb,
+        )
+        prompt = packet.to_system_prompt()
+        assert "[...truncated]" not in prompt
+        assert prompt.count("K") >= 3000
