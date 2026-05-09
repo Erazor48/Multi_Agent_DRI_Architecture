@@ -1242,19 +1242,23 @@ def company_files(
 @company_app.command("status")
 def company_status(
     company_id: str = typer.Option("", "--id", help="Company ID (uses active/latest if omitted)"),
+    watch: bool = typer.Option(False, "--watch", "-w", help="Poll continuously (Ctrl+C to stop)"),
+    interval: int = typer.Option(5, "--interval", "-n", help="Refresh interval in seconds (watch mode, default 5)"),
 ) -> None:
     """Show a snapshot of the company's current state: org, pending approvals, recent tasks, team."""
+    import time
     from pathlib import Path
     from rich.table import Table
+    from rich.console import Group as RichGroup
 
-    async def _run():
+    async def _fetch():
         from dri.config.settings import get_settings
         from dri.storage.database import init_db, get_session
         from dri.storage.repositories import CompanyAgentRepository
 
         c = await _resolve_company(company_id)
         if c is None:
-            return None, [], [], "", 0
+            return None, [], [], "", 0, 0, False
 
         await init_db()
         async with get_session() as db:
@@ -1264,8 +1268,8 @@ def company_status(
         ws_root = Path(get_settings().workspace_dir) / _slug(c.name)
 
         # Pending approvals
-        pending_path = ws_root / "shared" / "_pending_approvals.json"
         pending_count = 0
+        pending_path = ws_root / "shared" / "_pending_approvals.json"
         if pending_path.exists():
             import json
             try:
@@ -1274,16 +1278,27 @@ def company_status(
             except Exception:
                 pass
 
-        # Recent history (last ~1200 chars of _company_history.md)
+        # Recent history (last 3 entries of _company_history.md)
         history_lines: list[str] = []
         history_path = ws_root / "shared" / "_company_history.md"
         if history_path.exists():
             raw = history_path.read_text(encoding="utf-8")
-            # Each entry starts with "##"
             entries = [e.strip() for e in raw.split("\n## ") if e.strip()]
-            history_lines = entries[-3:]  # last 3 entries
+            history_lines = entries[-3:]
 
-        # Workspace file count (shallow: skip node_modules / .next)
+        # WIP detection — any _wip/ dir with at least one file → task is running
+        task_running = False
+        if ws_root.exists():
+            for wip_dir in ws_root.rglob("_wip"):
+                if wip_dir.is_dir():
+                    try:
+                        next(wip_dir.iterdir())
+                        task_running = True
+                        break
+                    except StopIteration:
+                        pass
+
+        # Workspace file count (skip heavy dirs)
         _SKIP = {"node_modules", ".next", "__pycache__", ".git"}
         file_count = 0
         if ws_root.exists():
@@ -1293,80 +1308,98 @@ def company_status(
                 if p.is_file():
                     file_count += 1
 
-        return c, agents, history_lines, str(ws_root), pending_count, file_count
+        return c, agents, history_lines, str(ws_root), pending_count, file_count, task_running
 
-    company, agents, history_lines, ws_root, pending_count, file_count = asyncio.run(_run())
+    def _render(company, agents, history_lines, ws_root, pending_count, file_count, task_running, *, next_refresh: int | None = None) -> RichGroup:
+        parts: list = []
 
-    if company is None:
-        console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
-        raise typer.Exit(1)
+        # ── Overview panel ────────────────────────────────────────────────────
+        dept_lines = "\n".join(f"  • {d['title']}" for d in company.org_structure)
+        pending_str = f"[yellow]{pending_count} pending[/yellow]" if pending_count else "[dim]none[/dim]"
+        wip_str = "[bold green]● Task running[/bold green]" if task_running else "[dim]○ Idle[/dim]"
+        footer = ""
+        if next_refresh is not None:
+            ts = datetime.now().strftime("%H:%M:%S")
+            footer = f"\n[dim]Last updated {ts} — next refresh in {next_refresh}s — Ctrl+C to stop[/dim]"
+        parts.append(Panel(
+            f"[bold]{company.name}[/bold]  [dim]{company.id[:8]}...[/dim]  {wip_str}\n"
+            f"[dim]{company.vision[:120]}[/dim]\n\n"
+            f"[bold]Departments ({len(company.org_structure)}):[/bold]\n{dept_lines}\n\n"
+            f"[bold]Pending approvals:[/bold] {pending_str}   "
+            f"[bold]Workspace files:[/bold] {file_count}" + footer,
+            title="[bold blue]Company Status[/bold blue]",
+            border_style="blue",
+        ))
 
-    console.print()
+        # ── Team table ────────────────────────────────────────────────────────
+        if agents:
+            table = Table(title="Team", show_lines=False, box=None, padding=(0, 2))
+            table.add_column("Title", style="bold")
+            table.add_column("Role", style="dim", width=10)
+            table.add_column("Tasks", justify="right", width=7)
+            table.add_column("Rate", justify="right", width=7)
+            table.add_column("Last Active", style="dim", width=17)
+            for a in agents:
+                rate = f"{a.success_rate:.0%}"
+                rate_color = "green" if a.success_rate >= 0.8 else ("yellow" if a.success_rate >= 0.5 else "red")
+                table.add_row(
+                    a.title, a.role, str(a.task_count),
+                    f"[{rate_color}]{rate}[/{rate_color}]",
+                    a.last_active_at.strftime("%Y-%m-%d %H:%M"),
+                )
+            parts.append(table)
+        else:
+            parts.append(Text.from_markup("[dim]No team members yet. Run a task to populate.[/dim]"))
 
-    # ── Company overview ──────────────────────────────────────────────────────
-    dept_lines = "\n".join(f"  • {d['title']}" for d in company.org_structure)
-    pending_str = (
-        f"[yellow]{pending_count} pending[/yellow]" if pending_count else "[dim]none[/dim]"
-    )
-    console.print(Panel(
-        f"[bold]{company.name}[/bold]  [dim]{company.id[:8]}...[/dim]\n"
-        f"[dim]{company.vision[:120]}[/dim]\n\n"
-        f"[bold]Departments ({len(company.org_structure)}):[/bold]\n{dept_lines}\n\n"
-        f"[bold]Pending approvals:[/bold] {pending_str}   "
-        f"[bold]Workspace files:[/bold] {ws_root}  ({file_count} files)",
-        title="[bold blue]Company Status[/bold blue]",
-        border_style="blue",
-    ))
+        # ── Recent task history ───────────────────────────────────────────────
+        if history_lines:
+            lines = ["[bold]Recent Tasks:[/bold]"]
+            for entry in history_lines:
+                entry_lines = entry.splitlines()
+                header = entry_lines[0].lstrip("# ").strip()
+                body = "\n".join(entry_lines[1:]).strip()
+                lines.append(f"  [cyan]▸[/cyan] [bold]{header}[/bold]")
+                if body:
+                    for bl in [l for l in body.splitlines() if l.strip()][:2]:
+                        lines.append(f"    [dim]{bl[:100]}[/dim]")
+            parts.append(Text.from_markup("\n".join(lines)))
 
-    # ── Team table ────────────────────────────────────────────────────────────
-    if agents:
-        table = Table(title="Team", show_lines=False, box=None, padding=(0, 2))
-        table.add_column("Title", style="bold")
-        table.add_column("Role", style="dim", width=10)
-        table.add_column("Tasks", justify="right", width=7)
-        table.add_column("Rate", justify="right", width=7)
-        table.add_column("Last Active", style="dim", width=17)
+        return RichGroup(*parts)
 
-        for a in agents:
-            rate = f"{a.success_rate:.0%}"
-            rate_color = "green" if a.success_rate >= 0.8 else ("yellow" if a.success_rate >= 0.5 else "red")
-            table.add_row(
-                a.title,
-                a.role,
-                str(a.task_count),
-                f"[{rate_color}]{rate}[/{rate_color}]",
-                a.last_active_at.strftime("%Y-%m-%d %H:%M"),
-            )
-        console.print(table)
-    else:
-        console.print("[dim]No team members yet. Run a task to populate.[/dim]")
-
-    # ── Recent task history ───────────────────────────────────────────────────
-    if history_lines:
+    # ── One-shot ──────────────────────────────────────────────────────────────
+    if not watch:
+        data = asyncio.run(_fetch())
+        company = data[0]
+        if company is None:
+            console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
+            raise typer.Exit(1)
         console.print()
-        console.print("[bold]Recent Tasks:[/bold]")
-        for entry in history_lines:
-            # First line of entry is the header; rest is body
-            entry_lines = entry.splitlines()
-            header = entry_lines[0].lstrip("# ").strip()
-            body = "\n".join(entry_lines[1:]).strip()
-            console.print(f"  [cyan]▸[/cyan] [bold]{header}[/bold]")
-            if body:
-                # Show at most 2 lines of body
-                body_lines = [l for l in body.splitlines() if l.strip()][:2]
-                for bl in body_lines:
-                    console.print(f"    [dim]{bl[:100]}[/dim]")
-    else:
-        console.print("[dim]No task history yet.[/dim]")
+        console.print(_render(*data))
+        console.print()
+        console.print(
+            "[dim]Tip: [bold]dri company status --watch[/bold] polls live · "
+            "[bold]dri company chat[/bold] · [bold]dri company approvals list[/bold][/dim]"
+        )
+        console.print()
+        return
 
-    console.print()
-    console.print(
-        "[dim]Commands: [bold]dri company chat[/bold] | "
-        "[bold]dri company approvals list[/bold] | "
-        "[bold]dri company team list[/bold] | "
-        "[bold]dri company files[/bold][/dim]"
-    )
-    console.print()
+    # ── Watch mode ────────────────────────────────────────────────────────────
+    console.print(f"[dim]Watching (refresh every {interval}s) — Ctrl+C to stop[/dim]")
+    try:
+        with Live(console=console, refresh_per_second=2, screen=False) as live:
+            while True:
+                data = asyncio.run(_fetch())
+                if data[0] is None:
+                    live.stop()
+                    console.print("[red]No company found.[/red]")
+                    raise typer.Exit(1)
+                live.update(_render(*data, next_refresh=interval))
+                for remaining in range(interval - 1, 0, -1):
+                    time.sleep(1)
+                    live.update(_render(*data, next_refresh=remaining))
+                time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Watch stopped.[/dim]")
 
 
 @company_app.command("decommission")
@@ -1492,16 +1525,7 @@ def company_delete(
     from pathlib import Path
     from dri.config.settings import get_settings
 
-    async def _get_company():
-        from dri.storage.database import init_db, get_session
-        from dri.storage.repositories import PersistentCompanyRepository
-        await init_db()
-        async with get_session() as db:
-            repo = PersistentCompanyRepository(db)
-            c = await repo.get(company_id) if company_id else await repo.get_latest()
-        return c
-
-    company = asyncio.run(_get_company())
+    company = asyncio.run(_resolve_company(company_id))
     if company is None:
         console.print("[red]No company found. Use [bold]dri company list[/bold] to see options.[/red]")
         raise typer.Exit(1)
