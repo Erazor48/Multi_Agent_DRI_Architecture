@@ -1201,9 +1201,9 @@ def company_status(
                 if p.is_file():
                     file_count += 1
 
-        return c, agents, history_lines, str(ws_root), pending_count
+        return c, agents, history_lines, str(ws_root), pending_count, file_count
 
-    company, agents, history_lines, ws_root, pending_count = asyncio.run(_run())
+    company, agents, history_lines, ws_root, pending_count, file_count = asyncio.run(_run())
 
     if company is None:
         console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
