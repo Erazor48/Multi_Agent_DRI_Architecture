@@ -580,13 +580,14 @@ Layer 6 (ACTIVE): Company Task History
 - [x] **Sprint 10** — race condition `_cleanup_wip()` fix, `_plan_org()` exploration, worker reads `shared/` before starting, structured worker missions. 195 passed / 3 skipped.
 - [x] **Sprint 11** — PROGRESS.md instruction in `worker.py`; `manim` allowlist + `manim_video_creation` skill; YouTube connector (`youtube_upload`, `youtube_create_playlist`) with `file_path` field in `propose_external_action`; `google-api-python-client` + `google-auth` deps; `.env.example` YouTube section.
 - [x] **Sprint 12** (2026-05-09) — P1: `CompanyExecutor.task()` routes through CEO via `[DIRECT TASK]` marker (CEO-aware, coherent history). P3: structured error log (`shared/_errors.jsonl`) + `dri company errors` CLI. P4: timing + cost estimate in `_company_history.md` + `dri company budget` cost column. P5: KB truncation limits raised (3000→6000 in executor, 1500→4000 for all roles in memory.py, worker/manager distinction removed). P1 side-effect: `[DIRECT TASK]` marker stripped before DB persistence so chat history stays clean.
+- [x] **Sprint 13** (2026-05-09) — P2: `dri company status --watch` polling mode (`--interval`, WIP detection, countdown footer, `_fetch()`/`_render()` extracted). Fix: `company_delete` now uses `_resolve_company()` → prefix support. Internship Gateway test company deleted.
 
 ---
 
 ## Notes for the Next Agent
 
 - **Read the full file before touching anything. Especially the Memory Architecture section.**
-- Active companies (as of 2026-05-09): **Agence NextModerne**, **Zenith**, and **Internship Gateway** (test company, suppressible).
+- Active companies (as of 2026-05-09): **Agence NextModerne**, **Zenith**.
   Use `uv run dri company list` to confirm current state.
 - **LangGraph is NOT used** despite being in the architecture table. `graph.py` is a skeleton.
   Don't add LangGraph code without user approval.
