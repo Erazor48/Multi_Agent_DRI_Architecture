@@ -12,6 +12,7 @@ import typer
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.markup import escape as _e
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.prompt import Prompt
@@ -234,10 +235,10 @@ def company_create(
 
     console.print()
     console.print(Panel(
-        f"[bold green]{company.name}[/bold green]\n"
-        f"[dim]{company.vision}[/dim]\n\n"
+        f"[bold green]{_e(company.name)}[/bold green]\n"
+        f"[dim]{_e(company.vision)}[/dim]\n\n"
         f"[bold]Departments:[/bold]\n" +
-        "\n".join(f"  • {d['title']}" for d in company.org_structure) +
+        "\n".join(f"  • {_e(d['title'])}" for d in company.org_structure) +
         f"\n\n[dim]ID: {company.id}[/dim]",
         title="[bold]Company Created[/bold]",
         border_style="green",
@@ -290,12 +291,13 @@ def company_list() -> None:
         for c in companies:
             is_active = c.id == active_id
             indicator = "[bold green]*[/bold green]" if is_active else ""
-            name = f"[bold green]{c.name}[/bold green]" if is_active else c.name
+            name = f"[bold green]{_e(c.name)}[/bold green]" if is_active else _e(c.name)
+            vision_snippet = c.vision[:55] + "..." if len(c.vision) > 55 else c.vision
             table.add_row(
                 indicator,
                 c.id[:8] + "...",
                 name,
-                c.vision[:55] + "..." if len(c.vision) > 55 else c.vision,
+                _e(vision_snippet),
                 str(len(c.org_structure)),
                 c.created_at.strftime("%Y-%m-%d %H:%M"),
             )
@@ -725,8 +727,10 @@ company_app.add_typer(team_app, name="team")
 @team_app.command("list")
 def team_list(
     company_id: str = typer.Option("", "--id", help="Company ID (uses latest if omitted)"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max agents to display (0 = all)"),
+    role: str = typer.Option("", "--role", "-r", help="Filter by role: worker, manager, root"),
 ) -> None:
-    """List all team members and their performance stats."""
+    """List team members and their performance stats."""
     from rich.table import Table
 
     async def _run() -> tuple[list, str]:
@@ -749,6 +753,17 @@ def team_list(
         console.print(f"[dim]No team members recorded for {cname} yet. Run a task to populate.[/dim]")
         return
 
+    if role:
+        role_filter = role.lower()
+        agents = [a for a in agents if a.role.lower() == role_filter]
+        if not agents:
+            console.print(f"[dim]No agents with role '{role}' found.[/dim]")
+            return
+
+    total = len(agents)
+    if limit > 0:
+        agents = agents[:limit]
+
     table = Table(title=f"Team — {cname}", show_lines=True)
     table.add_column("Title", style="bold")
     table.add_column("Role", width=10)
@@ -764,17 +779,22 @@ def team_list(
         rate_color = "green" if a.success_rate >= 0.8 else ("yellow" if a.success_rate >= 0.5 else "red")
         budget_str = f"{a.token_budget:,}" if a.token_budget > 0 else "[dim]default[/dim]"
         table.add_row(
-            a.title,
-            a.role,
+            _e(a.title),
+            _e(a.role),
             str(a.task_count),
             str(a.success_count),
             f"[{rate_color}]{rate}[/{rate_color}]",
             budget_str,
             a.last_active_at.strftime("%Y-%m-%d %H:%M"),
-            a.notes[:40] or "[dim]—[/dim]",
+            _e(a.notes[:40]) if a.notes else "[dim]—[/dim]",
         )
     console.print(table)
-    console.print("[dim]Use [bold]dri company team show <title>[/bold] for full profile.[/dim]")
+
+    shown = len(agents)
+    if total > shown:
+        console.print(f"[dim]Showing {shown} of {total} agents — use [bold]--limit 0[/bold] to see all.[/dim]")
+    else:
+        console.print(f"[dim]{total} agent{'s' if total != 1 else ''} total — use [bold]dri company team show <title>[/bold] for full profile.[/dim]")
 
 
 @team_app.command("show")
@@ -1314,7 +1334,7 @@ def company_status(
         parts: list = []
 
         # ── Overview panel ────────────────────────────────────────────────────
-        dept_lines = "\n".join(f"  • {d['title']}" for d in company.org_structure)
+        dept_lines = "\n".join(f"  • {_e(d['title'])}" for d in company.org_structure)
         pending_str = f"[yellow]{pending_count} pending[/yellow]" if pending_count else "[dim]none[/dim]"
         wip_str = "[bold green]● Task running[/bold green]" if task_running else "[dim]○ Idle[/dim]"
         footer = ""
@@ -1322,8 +1342,8 @@ def company_status(
             ts = datetime.now().strftime("%H:%M:%S")
             footer = f"\n[dim]Last updated {ts} — next refresh in {next_refresh}s — Ctrl+C to stop[/dim]"
         parts.append(Panel(
-            f"[bold]{company.name}[/bold]  [dim]{company.id[:8]}...[/dim]  {wip_str}\n"
-            f"[dim]{company.vision[:120]}[/dim]\n\n"
+            f"[bold]{_e(company.name)}[/bold]  [dim]{company.id[:8]}...[/dim]  {wip_str}\n"
+            f"[dim]{_e(company.vision[:120])}[/dim]\n\n"
             f"[bold]Departments ({len(company.org_structure)}):[/bold]\n{dept_lines}\n\n"
             f"[bold]Pending approvals:[/bold] {pending_str}   "
             f"[bold]Workspace files:[/bold] {file_count}" + footer,
@@ -1343,7 +1363,7 @@ def company_status(
                 rate = f"{a.success_rate:.0%}"
                 rate_color = "green" if a.success_rate >= 0.8 else ("yellow" if a.success_rate >= 0.5 else "red")
                 table.add_row(
-                    a.title, a.role, str(a.task_count),
+                    _e(a.title), _e(a.role), str(a.task_count),
                     f"[{rate_color}]{rate}[/{rate_color}]",
                     a.last_active_at.strftime("%Y-%m-%d %H:%M"),
                 )
@@ -1358,10 +1378,10 @@ def company_status(
                 entry_lines = entry.splitlines()
                 header = entry_lines[0].lstrip("# ").strip()
                 body = "\n".join(entry_lines[1:]).strip()
-                lines.append(f"  [cyan]▸[/cyan] [bold]{header}[/bold]")
+                lines.append(f"  [cyan]▸[/cyan] [bold]{_e(header)}[/bold]")
                 if body:
                     for bl in [l for l in body.splitlines() if l.strip()][:2]:
-                        lines.append(f"    [dim]{bl[:100]}[/dim]")
+                        lines.append(f"    [dim]{_e(bl[:100])}[/dim]")
             parts.append(Text.from_markup("\n".join(lines)))
 
         return RichGroup(*parts)

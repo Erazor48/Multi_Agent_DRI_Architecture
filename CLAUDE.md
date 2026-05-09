@@ -2,7 +2,7 @@
 
 > **For any new agent taking over this project:** This file is your single source of truth.
 > Read it **entirely** before touching any code. It reflects the exact state of the codebase
-> as of 2026-05-01. Never start from zero — everything is here.
+> as of 2026-05-09 (Sprint 14). Never start from zero — everything is here.
 
 ---
 
@@ -581,6 +581,7 @@ Layer 6 (ACTIVE): Company Task History
 - [x] **Sprint 11** — PROGRESS.md instruction in `worker.py`; `manim` allowlist + `manim_video_creation` skill; YouTube connector (`youtube_upload`, `youtube_create_playlist`) with `file_path` field in `propose_external_action`; `google-api-python-client` + `google-auth` deps; `.env.example` YouTube section.
 - [x] **Sprint 12** (2026-05-09) — P1: `CompanyExecutor.task()` routes through CEO via `[DIRECT TASK]` marker (CEO-aware, coherent history). P3: structured error log (`shared/_errors.jsonl`) + `dri company errors` CLI. P4: timing + cost estimate in `_company_history.md` + `dri company budget` cost column. P5: KB truncation limits raised (3000→6000 in executor, 1500→4000 for all roles in memory.py, worker/manager distinction removed). P1 side-effect: `[DIRECT TASK]` marker stripped before DB persistence so chat history stays clean.
 - [x] **Sprint 13** (2026-05-09) — P2: `dri company status --watch` polling mode (`--interval`, WIP detection, countdown footer, `_fetch()`/`_render()` extracted). Fix: `company_delete` now uses `_resolve_company()` → prefix support. Internship Gateway test company deleted.
+- [x] **Sprint 14** (2026-05-09) — P2: `dri company team list --limit N --role <role>` pagination + footer. P3: `rich.markup.escape()` on all user-provided strings in CLI panels/tables (fixes French accent truncation). P4: `dri company use <name>` already implemented (state.py + company_use command confirmed). 200 passed / 3 skipped.
 
 ---
 
