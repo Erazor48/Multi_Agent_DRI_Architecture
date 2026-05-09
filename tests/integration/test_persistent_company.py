@@ -138,9 +138,11 @@ async def test_task_force_creates_files(workspace):
 
     ws = workspace / "filetest"
 
-    # 2) Run task force: manager plans one worker, worker writes a file, manager synthesizes.
-    # Sequence: plan→write→worker_done→synthesis (manager reads file, then returns text).
+    # 2) Run task force: CEO spawns a team, manager plans one worker, worker writes a file.
+    # Sequence: CEO→spawn_team / plan→write→worker_done→synthesis (manager reads file, returns text).
+    # The mock provider is shared across CEO + agent calls — responses are consumed in order.
     task_provider = _make_provider([
+        _tool("spawn_team", {"task_description": "Write a report."}),  # CEO
         _tool("create_org_plan", {
             "team_members": [{
                 "title": "Writer",
@@ -155,7 +157,7 @@ async def test_task_force_creates_files(workspace):
         _tool("file_write", {"path": "shared/report.md", "content": "Hello from worker"}),
         _text("File written successfully."),
         _tool("file_read", {"path": "shared/report.md"}),  # manager synthesis reads the file
-        _text("Report complete: Hello from worker."),
+        _text("Report complete: Hello from worker."),  # repeated for KB update + CEO final text
     ])
 
     with _patch_all_providers(task_provider):
@@ -194,7 +196,9 @@ async def test_external_action_logged_to_approval_queue(workspace):
 
     ws = workspace / "actiontest"
 
+    # CEO first spawns a team, then the manager→worker chain runs.
     task_provider = _make_provider([
+        _tool("spawn_team", {"task_description": "Send outreach email."}),  # CEO
         _tool("create_org_plan", {
             "team_members": [{
                 "title": "Outreach Agent",
@@ -214,7 +218,7 @@ async def test_external_action_logged_to_approval_queue(workspace):
             "rationale": "Initial outreach to potential customer.",
         }),
         _text("Email proposed. Action pending approval."),
-        _text("Outreach action queued for founder approval."),
+        _text("Outreach action queued for founder approval."),  # repeated for CEO final text
     ])
 
     with _patch_all_providers(task_provider):

@@ -10,9 +10,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 import unicodedata
 import uuid
 from typing import Any
+
+# Blended cost estimate for Gemini Flash workers (input + output averaged, $/M tokens).
+# Used for rough $ estimates in `dri company budget` and history logs.
+_COST_PER_M_TOKENS: float = 0.15
 
 from dri.config.settings import settings
 from dri.core.models import CompanyMessage, PersistentCompany
@@ -348,6 +353,9 @@ class CompanyExecutor:
             "workspace snapshot — not on what a team claimed.\n\n"
 
             "## Execution rules — mandatory\n"
+            "- **Direct task rule**: if the founder's message is marked [DIRECT TASK], "
+            "call spawn_team immediately with no confirmation message. "
+            "Do not greet, do not explain, do not ask — just spawn and report results.\n"
             "- **New conversation rule**: if the founder's message is marked [NEW CONVERSATION], "
             "ALWAYS respond conversationally first: greet the founder, summarize the company "
             "structure in 2-3 sentences, and invite them to share their first task or ask questions. "
@@ -489,22 +497,14 @@ class CompanyExecutor:
         task_description: str,
         on_status: Any = None,
     ) -> str:
-        """Directly spawn a one-shot team to execute a task for this company."""
-        await init_db()
-
-        async with get_session() as db:
-            repo = PersistentCompanyRepository(db)
-            company = await repo.get(company_id)
-        if company is None:
-            raise ValueError(f"Company {company_id} not found.")
-
-        workspace_root = _company_workspace(company.name)
-
-        return await _run_task_force(
-            company=company,
-            task_description=task_description,
-            workspace_root=workspace_root,
-            on_status=on_status or (lambda _: None),
+        """Spawn a team via the CEO so the conversation history stays coherent."""
+        # Route through chat() so the CEO is aware of the task and its result.
+        # The [DIRECT TASK] marker tells the CEO to spawn immediately, no confirmation.
+        marked = f"[DIRECT TASK — spawn immediately without asking for confirmation]\n\n{task_description}"
+        return await CompanyExecutor.chat(
+            company_id=company_id,
+            user_message=marked,
+            on_status=on_status,
         )
 
 
@@ -600,8 +600,9 @@ def _build_ceo_messages(
         llm_messages.append({"role": role, "content": content})
 
     # Mark the first ever message so the CEO greets first instead of spawning immediately.
+    # Skip the marker when the message is already tagged [DIRECT TASK] — no conflict needed.
     final_content = current_user_message
-    if not recent and not summaries:
+    if not recent and not summaries and "[DIRECT TASK" not in current_user_message:
         final_content = f"[NEW CONVERSATION — greet the founder first, do NOT spawn yet]\n\n{current_user_message}"
 
     llm_messages.append({"role": "user", "content": final_content})
@@ -777,6 +778,7 @@ def _append_company_history(
     registry: Any,
     report: Any,
     tokens_total: int,
+    elapsed_seconds: float = 0.0,
 ) -> None:
     """Append one entry to shared/_company_history.md (Layer 6). Non-critical — errors are swallowed."""
     from datetime import datetime, timezone
@@ -807,11 +809,16 @@ def _append_company_history(
         else:
             outcome = f"FAILED ({done_workers}/{total_workers} workers succeeded)"
 
+        cost_usd = tokens_total * _COST_PER_M_TOKENS / 1_000_000
+        duration_str = f"{int(elapsed_seconds)}s" if elapsed_seconds > 0 else "n/a"
+
         entry = (
             f"\n## {today} — {task_summary}\n"
             f"- Team: {team_str}\n"
             f"- Outcome: {outcome}\n"
             f"- Tokens: {tokens_total:,}\n"
+            f"- Duration: {duration_str}\n"
+            f"- Cost (est.): ${cost_usd:.4f}\n"
         )
 
         is_new = not history_file.exists() or history_file.stat().st_size == 0
@@ -821,6 +828,51 @@ def _append_company_history(
             f.write(entry)
     except Exception:
         pass  # History log is non-critical
+
+
+def _append_company_error(
+    *,
+    workspace_root: str,
+    task_description: str,
+    registry: Any,
+    report: Any,
+    tokens_total: int,
+    elapsed_seconds: float = 0.0,
+) -> None:
+    """Append a structured error entry to shared/_errors.jsonl. Non-critical — errors are swallowed."""
+    from datetime import datetime, timezone
+    from pathlib import Path as _Path
+    from dri.core.models import AgentStatus as _AgentStatus, TaskStatus as _TaskStatus
+
+    try:
+        ws = _Path(workspace_root)
+        errors_file = ws / "shared" / "_errors.jsonl"
+        errors_file.parent.mkdir(parents=True, exist_ok=True)
+
+        workers = registry.all_workers()
+        done_agents = [n.title for n in workers if n.status == _AgentStatus.DONE]
+        failed_agents = [n.title for n in workers if n.status == _AgentStatus.FAILED]
+
+        _task_clean = task_description.replace("\n", " ")
+        task_summary = (_task_clean[:200] + "…") if len(_task_clean) > 200 else _task_clean
+
+        details = (report.result or "")[:500] if report.result else ""
+
+        entry = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "task": task_summary,
+            "outcome": report.status.value if hasattr(report.status, "value") else str(report.status),
+            "failed_agents": failed_agents,
+            "done_agents": done_agents,
+            "tokens": tokens_total,
+            "elapsed_s": round(elapsed_seconds, 1),
+            "details": details,
+        }
+
+        with errors_file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception:
+        pass  # Error log is non-critical
 
 
 async def _update_company_kb(
@@ -1125,7 +1177,10 @@ async def _run_task_force(
         await task_repo.create(session.id, task)
 
     on_status(f"Task force active: {task_description}")
+    _task_start_time = time.time()
     report = await manager.run(task)
+
+    _task_elapsed = time.time() - _task_start_time
 
     # All workers are done — remove any _wip/ dirs that workers left behind.
     # Workers with root_workspace_access have _cleanup_wip() that cleans everything,
@@ -1159,7 +1214,20 @@ async def _run_task_force(
         registry=registry,
         report=report,
         tokens_total=tokens_total,
+        elapsed_seconds=_task_elapsed,
     )
+
+    # P3: Append structured error entry for FAILED / PARTIAL outcomes.
+    _fail_count = sum(1 for n in registry.all_workers() if n.status.value == "failed")
+    if report.status != TaskStatus.DONE or _fail_count > 0:
+        _append_company_error(
+            workspace_root=workspace_root,
+            task_description=task_description,
+            registry=registry,
+            report=report,
+            tokens_total=tokens_total,
+            elapsed_seconds=_task_elapsed,
+        )
 
     # Layer 3: Auto-update company knowledge base after every successful task.
     if report.status == TaskStatus.DONE:

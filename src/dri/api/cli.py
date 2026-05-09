@@ -1024,6 +1024,8 @@ def company_budget(
         console.print(f"[dim]No session data found for {company.name}. Run a task to populate.[/dim]")
         return
 
+    _COST_PER_M = 0.15  # Gemini Flash blended estimate $/M tokens
+
     console.print()
     for session, agents in session_data:
         table = Table(
@@ -1035,6 +1037,7 @@ def company_budget(
         table.add_column("Used", justify="right")
         table.add_column("Remaining", justify="right")
         table.add_column("%", justify="right")
+        table.add_column("Cost (est.)", justify="right", style="dim")
 
         for a in sorted(agents, key=lambda x: x.budget_used, reverse=True):
             if a.budget_total == 0:
@@ -1042,12 +1045,14 @@ def company_budget(
             remaining = a.budget_total - a.budget_used
             pct = a.budget_used / a.budget_total
             pct_color = "red" if pct > 0.9 else ("yellow" if pct > 0.7 else "green")
+            cost = a.budget_used * _COST_PER_M / 1_000_000
             table.add_row(
                 a.title,
                 f"{a.budget_total:,}",
                 f"{a.budget_used:,}",
                 f"{remaining:,}",
                 f"[{pct_color}]{pct:.0%}[/{pct_color}]",
+                f"${cost:.4f}",
             )
 
         # Total row
@@ -1055,6 +1060,7 @@ def company_budget(
         total_used = sum(a.budget_used for a in agents)
         if total_alloc > 0:
             total_pct = total_used / total_alloc
+            total_cost = total_used * _COST_PER_M / 1_000_000
             table.add_section()
             table.add_row(
                 "[bold]TOTAL[/bold]",
@@ -1062,10 +1068,96 @@ def company_budget(
                 f"[bold]{total_used:,}[/bold]",
                 f"[bold]{total_alloc - total_used:,}[/bold]",
                 f"[bold]{total_pct:.0%}[/bold]",
+                f"[bold]${total_cost:.4f}[/bold]",
             )
 
         console.print(table)
         console.print()
+
+    console.print("[dim]Cost estimate uses Gemini Flash blended rate (~$0.15/M tokens).[/dim]\n")
+
+
+@company_app.command("errors")
+def company_errors(
+    company_id: str = typer.Option("", "--id", help="Company ID (uses active/latest if omitted)"),
+    limit: int = typer.Option(20, "--limit", "-n", help="Maximum number of entries to show"),
+) -> None:
+    """Show the structured error log for this company (shared/_errors.jsonl)."""
+    from pathlib import Path
+    from rich.table import Table
+
+    async def _get_company():
+        from dri.storage.database import init_db
+        await init_db()
+        return await _resolve_company(company_id)
+
+    company = asyncio.run(_get_company())
+    if company is None:
+        console.print("[red]No company found. Use [bold]dri company create[/bold] first.[/red]")
+        raise typer.Exit(1)
+
+    from dri.config.settings import get_settings
+    ws_root = Path(get_settings().workspace_dir) / _slug(company.name)
+    errors_file = ws_root / "shared" / "_errors.jsonl"
+
+    if not errors_file.exists():
+        console.print(f"[green]No errors recorded for {company.name}.[/green]")
+        return
+
+    import json as _json
+    entries = []
+    try:
+        for line in errors_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                entries.append(_json.loads(line))
+    except Exception as e:
+        console.print(f"[red]Failed to read error log: {e}[/red]")
+        raise typer.Exit(1)
+
+    if not entries:
+        console.print(f"[green]No errors recorded for {company.name}.[/green]")
+        return
+
+    recent = entries[-limit:]
+
+    console.print()
+    table = Table(
+        title=f"{company.name} — Error Log (last {len(recent)} entries)",
+        show_lines=True,
+    )
+    table.add_column("#", width=4, justify="right")
+    table.add_column("Date", style="dim", width=20)
+    table.add_column("Outcome", width=10)
+    table.add_column("Task", no_wrap=False, max_width=45)
+    table.add_column("Failed agents", style="red", max_width=30)
+    table.add_column("Tokens", justify="right", width=10)
+    table.add_column("Duration", justify="right", width=9)
+
+    for i, e in enumerate(recent, 1):
+        outcome = e.get("outcome", "?")
+        color = "red" if outcome == "failed" else "yellow"
+        failed = ", ".join(e.get("failed_agents", [])) or "[dim]—[/dim]"
+        tokens = e.get("tokens", 0)
+        elapsed = e.get("elapsed_s", 0)
+        duration_str = f"{int(elapsed)}s" if elapsed else "n/a"
+        ts = e.get("ts", "")[:16].replace("T", " ")
+        task = e.get("task", "")[:80]
+        table.add_row(
+            str(i),
+            ts,
+            f"[{color}]{outcome.upper()}[/{color}]",
+            task,
+            failed,
+            f"{tokens:,}",
+            duration_str,
+        )
+
+    console.print(table)
+    console.print(
+        f"\n[dim]Error log: {errors_file}[/dim]\n"
+        "[dim]Commands: [bold]dri company status[/bold] | [bold]dri company budget[/bold][/dim]\n"
+    )
 
 
 @company_app.command("files")
