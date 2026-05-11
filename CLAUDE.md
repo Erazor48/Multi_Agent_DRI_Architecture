@@ -68,7 +68,7 @@ src/dri/
   storage/repositories.py      ← Tout accès DB (pattern Repository)
   llm/base.py                  ← BaseLLMProvider ABC + LLMResponse normalisé
   llm/factory.py               ← create_provider() — unique point d'instanciation
-  llm/gemini_provider.py       ← Gemini (Vertex AI + API key). Détails: docs/architecture-providers.md
+  llm/gemini_provider.py       ← Gemini (Vertex AI + API key). Détails: .claude/architecture-providers.md
   llm/anthropic_provider.py    ← Anthropic Claude avec prompt caching
   skills/catalog.py            ← Skill catalog : web, video, outreach, finance, code...
   tools/                       ← Tool registry : web_search, code_exec, file_ops, shell_exec, external_actions
@@ -114,7 +114,7 @@ Layer 1  _MAX_HISTORY_ROUNDS = 12        Fenêtre glissante par agent (CEO: 14 v
 Layer 0  SQLite via SQLAlchemy           Tout l'état opérationnel
 ```
 
-Détail complet : `docs/architecture-memory.md`
+Détail complet : `.claude/architecture-memory.md`
 
 ---
 
@@ -165,20 +165,26 @@ Git destructif bloqué au niveau tool : `git clean`, `git rm`, `git restore`, `g
 
 ---
 
-## État Actuel — Sprint 16 terminé (2026-05-11)
+## État Actuel — Sprint 16 terminé (2026-05-12)
 
 **Tests** : 200 passed / 3 skipped (`uv run pytest tests/ -q`)
+**Git** : propre, 3 commits ahead of origin/master
 **Entreprises actives** : Agence NextModerne, Zenith
-**Provider actif** : Gemini via Vertex AI
+**Provider actif** : Gemini via Vertex AI (CEO=gemini-2.5-pro, workers=gemini-2.5-flash)
+
+**Fixes récents non-sprintés** (committé 2026-05-12) :
+- Gemini 2.5 thinking mode : `LLMResponse.thinking`, `ThinkingConfig(include_thoughts=True)`, guard `_consecutive_empty`
+- Code fence stripping : `_strip_code_fence()` dans cli.py (Gemini enveloppait les réponses en ```)
+- Error display hors `Live(transient=True)` : les erreurs ne disparaissent plus
 
 **Priorités suivantes** (dans l'ordre) :
-1. **Provider OpenAI-compatible** — `openai_compatible_provider.py` → OpenRouter, Ollama, Groq, tout modèle
-2. **`dri setup` wizard** — UX non-technique pour configurer un provider (voir `docs/architecture-providers.md`)
-3. **Multi-tenancy** — `user_id` sur le schema DB — requis avant tout dashboard web
-4. **HTTP API** (FastAPI) — bridge Python → web/mobile
-5. **Dashboard web** (TanStack Start + Convex + Better Auth)
+1. **Test E2E réel d'abord** — lancer `dri company chat` avec Zenith ou NextModerne, observer la qualité réelle avant d'ajouter des features
+2. **Provider OpenAI-compatible** — `openai_compatible_provider.py` → OpenRouter, Ollama, Groq. Voir `.claude/architecture-providers.md`
+3. **`dri setup` wizard** — UX non-technique pour configurer un provider
+4. **Multi-tenancy** — `user_id` sur le schema DB — requis avant tout dashboard web
+5. **HTTP API** (FastAPI) → **Dashboard web** (TanStack Start + Convex + Better Auth)
 
-Historique complet des sprints : `docs/sprint-history.md`
+Historique complet des sprints : `.claude/sprint-history.md`
 
 ---
 
@@ -193,3 +199,6 @@ Historique complet des sprints : `docs/sprint-history.md`
 - **Ajouter un connecteur** : `src/dri/connectors/<name>.py` → `ConnectorRegistry.register()` en bas → import dans `__init__.py`.
 - **LangGraph** n'est PAS utilisé. `graph.py` est un squelette mort.
 - Docs IA dans `.claude/`. `docs/` est entièrement gitignore (notes perso du fondateur).
+- **Gemini thinking mode** : `LLMResponse.thinking` capture le raisonnement interne. `_consecutive_empty` guard dans `BaseAgent._run_agentic_loop()` et `_ceo_loop()` évite les boucles vides.
+- **TanStack Start pour agents** : skill bien définie mais LLMs ont moins de training data sur ce framework récent. Si un agent produit du code TanStack Start incorrect, préférer valider avec `bun run build` systématiquement. Next.js reste une option solide si TanStack pose problème.
+- **Avant d'ajouter des features** : faire un vrai test end-to-end (`dri company chat`) et documenter ce qui ne va pas. La qualité de sortie des agents n'est pas testée systématiquement.

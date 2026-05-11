@@ -5,12 +5,24 @@ Archive des sprints complétés. Consulter ce fichier pour comprendre l'historiq
 
 ---
 
-## Sprint 16 (2026-05-11)
+## Fix Gemini + UI (2026-05-12, hors sprint)
+- `LLMResponse.thinking` : capture le raisonnement Gemini 2.5 séparément du texte.
+- `GeminiProvider` : `ThinkingConfig(include_thoughts=True)` — reasoning tokens séparés de `response.text`.
+- `BaseAgent` + `_ceo_loop` : guard `_consecutive_empty` — nudge puis fallback si Gemini émet thought-only sans texte.
+- `_strip_code_fence()` dans `cli.py` : Gemini enveloppait parfois les réponses en ```markdown.
+- Errors dans `company_chat` déplacées hors `Live(transient=True)` — ne disparaissent plus.
+- CEO system prompt : instruction explicite de ne jamais envelopper la réponse en code fence.
+- `.env.example` : noms de modèles simplifiés (`gemini-2.5-pro` / `gemini-2.5-flash`).
+
+## Sprint 16 (2026-05-11→12)
 - Stack switch : `tanstack_start_development`, `convex_backend_development`, `better_auth_development` ajoutés à `catalog.py`.
 - Architecture table mise à jour. Tous les nouveaux web apps agents → TanStack Start + Convex + Better Auth.
 - `nextjs_development` conservé pour projets legacy.
-- `.gitignore` mis à jour : `docs/` → `docs/personal/` pour tracker les docs architecture.
-- CLAUDE.md restructuré (lean ~200 lignes) + Prime Directive + global `~/.claude/CLAUDE.md`.
+- CLAUDE.md restructuré : 522 → ~200 lignes, Prime Directive ajoutée, archive externalisée.
+- `~/.claude/CLAUDE.md` global créé : préférences universelles (français, bun, challenger, git).
+- Docs IA déplacées de `docs/` vers `.claude/` (convention namespace Claude Code).
+- `docs/` restauré entièrement gitignore (espace perso fondateur).
+- Memory files : `user_profile.md` mis à jour, `project_philosophy.md` créé (mandat agent, vision produit).
 
 ## Sprint 15 (2026-05-09)
 - `dri company team show` : section "Recent missions" (parse `_company_history.md`, filtre par titre, 5 dernières).
