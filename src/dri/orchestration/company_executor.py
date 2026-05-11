@@ -264,6 +264,7 @@ class CompanyExecutor:
         company_id: str,
         user_message: str,
         on_status: Any = None,
+        on_thinking: Any = None,
     ) -> str:
         """Send a message to the persistent CEO. Returns the CEO's response."""
         await init_db()
@@ -460,7 +461,9 @@ class CompanyExecutor:
             "You can read the current version with `file_read` on `shared/_company_knowledge.md`.\n\n"
 
             "Always speak as the CEO: direct, honest, concise. "
-            "A short honest failure report is better than a long fabricated success."
+            "A short honest failure report is better than a long fabricated success.\n"
+            "NEVER wrap your response in a markdown code fence (``` or ```markdown). "
+            "Write your response as plain prose or direct markdown — never inside a code block."
         ) + _ceo_history_section
 
         llm_messages = _build_ceo_messages(history, user_message)
@@ -474,7 +477,7 @@ class CompanyExecutor:
             ))
 
         provider = create_provider()
-        ceo_response = await _ceo_loop(
+        ceo_response, ceo_thinking = await _ceo_loop(
             provider=provider,
             system=system,
             messages=llm_messages,
@@ -482,6 +485,9 @@ class CompanyExecutor:
             workspace_root=workspace_root,
             on_status=_notify,
         )
+
+        if on_thinking and ceo_thinking:
+            on_thinking(ceo_thinking)
 
         # Save CEO response
         async with get_session() as db:
@@ -618,7 +624,8 @@ async def _ceo_loop(
     company: PersistentCompany,
     workspace_root: str,
     on_status: Any,
-) -> str:
+) -> tuple[str, str]:
+    """Returns (response_text, thinking_text)."""
     """
     Run the CEO's agentic loop.
 
@@ -648,6 +655,7 @@ async def _ceo_loop(
             "content": f"**Current workspace (verified on disk):**\n{snapshot}\n\n---\n\n{original}",
         }
 
+    _consecutive_empty = 0
     for round_idx in range(20):  # allow file inspection rounds before and between spawns
         on_status(f"CEO thinking... (round {round_idx + 1})")
         response = await provider.call(
@@ -661,8 +669,21 @@ async def _ceo_loop(
         msgs.append(response.to_assistant_message())
 
         if not response.has_tool_calls:
-            return response.text or "(No response)"
+            if response.text:
+                return response.text, response.thinking
+            # Gemini thinking mode sometimes produces thought-only responses with no output text.
+            # Nudge the model once; if it empties again, fall back gracefully.
+            _consecutive_empty += 1
+            if _consecutive_empty >= 2:
+                fallback = response.thinking.strip() or "The task has been completed. Please review the workspace for deliverables."
+                return fallback, response.thinking
+            msgs.append({
+                "role": "user",
+                "content": "Your last response produced no output text. Please provide your conclusion or a summary of what was accomplished.",
+            })
+            continue
 
+        _consecutive_empty = 0
         tool_results = []
         for tc in response.tool_calls:
             if tc.name == "spawn_team":
@@ -735,7 +756,7 @@ async def _ceo_loop(
 
         msgs.append({"role": "user", "content": tool_results})
 
-    return response.text or "(Max rounds reached)"
+    return response.text or "(Max rounds reached)", response.thinking
 
 
 _SNAPSHOT_MAX_FILES = 120  # cap file listing to keep CEO context budget under control

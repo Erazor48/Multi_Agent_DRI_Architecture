@@ -65,6 +65,9 @@ class GeminiProvider(BaseLLMProvider):
         config_kwargs: dict[str, Any] = {
             "system_instruction": system,
             "max_output_tokens": max_tokens,
+            # include_thoughts=True separates reasoning tokens into Part.thought=True parts
+            # so response.text stays clean (no mixed English thinking in the final answer).
+            "thinking_config": types.ThinkingConfig(include_thoughts=True),
         }
         if tools:
             config_kwargs["tools"] = [self._to_gemini_tools(tools)]
@@ -164,7 +167,12 @@ class GeminiProvider(BaseLLMProvider):
         if not candidate.content or not candidate.content.parts:
             return LLMResponse(text="", input_tokens=input_tokens, output_tokens=output_tokens)
 
+        thinking = ""
         for part in candidate.content.parts:
+            if getattr(part, "thought", False):
+                if part.text:
+                    thinking += part.text
+                continue
             if part.text:
                 text += part.text
             elif part.function_call:
@@ -181,6 +189,7 @@ class GeminiProvider(BaseLLMProvider):
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             stop_reason="tool_use" if tool_calls else "end_turn",
+            thinking=thinking,
         )
 
 

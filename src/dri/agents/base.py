@@ -239,6 +239,7 @@ class BaseAgent(ABC):
         initial_len = len(initial_messages)
         messages = list(initial_messages)
         final_text = ""
+        _consecutive_empty = 0
 
         for _ in range(30):  # max 30 tool call rounds
             response = await self._call_llm(messages, tools=tool_specs or None)
@@ -247,7 +248,20 @@ class BaseAgent(ABC):
             messages.append(response.to_assistant_message())
 
             if not response.has_tool_calls:
-                return final_text
+                if final_text:
+                    return final_text
+                # Gemini thinking mode: thought-only response with no output text.
+                # Nudge once; second empty response falls back to thinking or generic message.
+                _consecutive_empty += 1
+                if _consecutive_empty >= 2:
+                    return response.thinking.strip() or "Task completed."
+                messages.append({
+                    "role": "user",
+                    "content": "Your last response produced no output. Please provide your conclusion or a summary of the work done.",
+                })
+                continue
+
+            _consecutive_empty = 0
 
             # Execute all tool calls in parallel
             tool_results = await asyncio.gather(

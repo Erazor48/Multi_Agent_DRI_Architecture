@@ -49,37 +49,52 @@ def _print_banner() -> None:
     console.print()
 
 
+_PANEL_MSG_MAX = 110  # max chars per status line in the live panel
+
+
 def _render_progress_panel(lines: list[str], title: str = "Team Activity") -> Panel:
     """Render agent tool-call activity as a color-coded live panel with spinner."""
     from rich.console import Group as RichGroup
     from rich.spinner import Spinner
 
     latest = lines[-1] if lines else "Working..."
-    spinner = Spinner("dots", text=f"  {latest}", style="bold blue")
+    latest_display = latest[:_PANEL_MSG_MAX] + "…" if len(latest) > _PANEL_MSG_MAX else latest
+    spinner = Spinner("dots", text=f"  {latest_display}", style="bold blue")
 
     if len(lines) <= 1:
         return Panel(spinner, title=f"[bold]{title}[/bold]", border_style="blue", padding=(0, 1))
 
     history = Text()
     for line in lines[-9:-1]:
+        display = line[:_PANEL_MSG_MAX] + "…" if len(line) > _PANEL_MSG_MAX else line
         if "shell_exec" in line:
-            history.append(f"  {line}\n", style="yellow")
+            history.append(f"  {display}\n", style="yellow")
         elif "web_search" in line:
-            history.append(f"  {line}\n", style="cyan")
+            history.append(f"  {display}\n", style="cyan")
         elif "file_write" in line or "file_read" in line:
-            history.append(f"  {line}\n", style="green")
+            history.append(f"  {display}\n", style="green")
         elif "spawn" in line.lower():
-            history.append(f"  {line}\n", style="bold blue")
+            history.append(f"  {display}\n", style="bold blue")
         else:
-            history.append(f"  {line}\n", style="dim")
+            history.append(f"  {display}\n", style="dim")
     return Panel(RichGroup(history, spinner), title=f"[bold]{title}[/bold]", border_style="blue", padding=(0, 1))
+
+
+def _strip_code_fence(text: str) -> str:
+    """Strip a wrapping markdown code fence that LLMs sometimes add around entire responses."""
+    import re
+    stripped = text.strip()
+    m = re.match(r"^```(?:markdown|md)?\n(.*?)\n```\s*$", stripped, re.DOTALL)
+    if m:
+        return m.group(1)
+    return text
 
 
 def _print_result(result: str) -> None:
     console.print()
     console.print(Rule("[bold green]Company Report[/bold green]", style="green"))
     console.print()
-    console.print(Markdown(result))
+    console.print(Markdown(_strip_code_fence(result)))
     console.print()
     console.print(Rule(style="green"))
     console.print()
@@ -398,6 +413,8 @@ def company_chat(
             _prog_lines: list[str] = []
             _panel_title = ["CEO"]
             _TEAM_KEYWORDS = ("Spawn", "Synthesiz", "Exploring workspace", "Designing team", "agent(s)")
+            _reply: str = ""
+            _chat_exc: Exception | None = None
             with Live(_render_progress_panel([], title="CEO"), console=console, refresh_per_second=4, transient=True) as live:
                 def _upd(m: str) -> None:
                     _prog_lines.append(m)
@@ -406,14 +423,18 @@ def company_chat(
                     live.update(_render_progress_panel(_prog_lines, title=_panel_title[0]))
 
                 try:
-                    reply = await CompanyExecutor.chat(cid, user_input, on_status=_upd)
+                    _reply = await CompanyExecutor.chat(cid, user_input, on_status=_upd)
                 except Exception as e:
-                    console.print(f"[red]Error: {e}[/red]")
-                    continue
+                    _chat_exc = e
+
+            # Handle error OUTSIDE the Live context so it's never cleared by transient=True.
+            if _chat_exc is not None:
+                console.print(f"[red]Error: {_chat_exc}[/red]")
+                continue
 
             console.print()
             console.print(f"[bold blue]{cname} CEO[/bold blue]")
-            console.print(Markdown(reply))
+            console.print(Markdown(_strip_code_fence(_reply)))
             console.print()
 
     asyncio.run(_session())

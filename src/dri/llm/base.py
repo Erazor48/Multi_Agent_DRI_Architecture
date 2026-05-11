@@ -47,6 +47,7 @@ class LLMResponse:
     input_tokens: int = 0
     output_tokens: int = 0
     stop_reason: str = "end_turn"          # "end_turn" | "tool_use"
+    thinking: str = ""                     # internal reasoning (Gemini thinking mode, optional)
 
     @property
     def has_tool_calls(self) -> bool:
