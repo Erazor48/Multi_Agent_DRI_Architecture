@@ -1,7 +1,7 @@
 # DRI Multi-Agent Architecture — CLAUDE.md
 
-> Lis entièrement avant de toucher au code. Mis à jour : Sprint 16 (2026-05-11).
-> Docs détaillés : `docs/` — `sprint-history.md`, `architecture-memory.md`, `architecture-providers.md`, `CLI/reference.md`.
+> Lis entièrement avant de toucher au code. Mis à jour : Sprint 16 (2026-05-12).
+> Docs détaillés dans `.claude/` — `sprint-history.md`, `architecture-memory.md`, `architecture-providers.md`, `CLI-reference.md`.
 
 ---
 
@@ -80,11 +80,11 @@ src/dri/
   connectors/                  ← 9 connecteurs auto-enregistrés : SMTP, Slack, Twilio, SendGrid,
                                   LinkedIn, GitHub, YouTube, Webhook + base.py + registry.py
   api/cli.py                   ← Toutes les commandes CLI
-docs/
-  sprint-history.md            ← Archive complète des sprints (historique)
+.claude/
   architecture-memory.md       ← Détail des 6 couches mémoire
   architecture-providers.md    ← Système providers + roadmap OpenAI-compatible + dri setup
-  CLI/reference.md             ← Référence complète des commandes CLI
+  sprint-history.md            ← Archive complète des sprints (historique)
+  CLI-reference.md             ← Référence complète des commandes CLI
 ```
 
 ---
@@ -189,7 +189,7 @@ Historique complet des sprints : `docs/sprint-history.md`
 - `settings.py` : `from dri.config.settings import settings` ou `get_settings()`. Jamais `os.environ` direct.
 - **Slug normalization** : toujours `_slug()` dans `cli.py` ou `_company_slug()` dans `company_executor.py` (normalisation NFD pour accents français).
 - **`rich.markup.escape`** (importé `_e` dans `cli.py`) sur TOUT contenu dynamique utilisateur dans les panels/tables.
-- **Ajouter un provider** : `src/dri/llm/<name>_provider.py` → branch dans `factory.py` → settings → doc dans `docs/architecture-providers.md`.
+- **Ajouter un provider** : `src/dri/llm/<name>_provider.py` → branch dans `factory.py` → settings → doc dans `.claude/architecture-providers.md`.
 - **Ajouter un connecteur** : `src/dri/connectors/<name>.py` → `ConnectorRegistry.register()` en bas → import dans `__init__.py`.
 - **LangGraph** n'est PAS utilisé. `graph.py` est un squelette mort.
-- Docs perso gitignorées : `docs/personal/`. Les docs architecture (`docs/*.md`) sont trackées.
+- Docs IA dans `.claude/`. `docs/` est entièrement gitignore (notes perso du fondateur).

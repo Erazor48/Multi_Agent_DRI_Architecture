@@ -2,11 +2,7 @@
 .dri_state
 .venv/
 credentials/
-docs/personal/
-docs/Long_Term_company/
-docs/Prompts/
-docs/Short_Term_company/
-docs/todo.md
+docs/
 __pycache__/
 *.pyc
 *.pyo
