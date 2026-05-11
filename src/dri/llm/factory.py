@@ -22,5 +22,12 @@ def create_provider() -> BaseLLMProvider:
             credentials_file=s.google_application_credentials,
         )
 
+    if s.llm_provider == "openai_compatible":
+        from dri.llm.openai_compatible_provider import OpenAICompatibleProvider
+        return OpenAICompatibleProvider(
+            api_key=s.openai_compatible_api_key,
+            base_url=s.openai_compatible_base_url,
+        )
+
     from dri.llm.anthropic_provider import AnthropicProvider
     return AnthropicProvider(api_key=s.anthropic_api_key)

@@ -59,10 +59,10 @@ Fonctionnalités :
 
 ---
 
-## Providers planifiés (roadmap)
+## Providers implémentés (suite)
 
-### OpenAI-compatible — PRIORITÉ 1
-**Fichier à créer** : `src/dri/llm/openai_compatible_provider.py`
+### OpenAI-compatible — IMPLÉMENTÉ (Sprint 17)
+**Fichier** : `src/dri/llm/openai_compatible_provider.py`
 **SDK** : `openai` (compatible avec tous les providers ci-dessous)
 
 Ce single provider couvre via `base_url` :
@@ -76,29 +76,15 @@ Ce single provider couvre via `base_url` :
 | Fireworks | `https://api.fireworks.ai/inference/v1` | Fast inference |
 | Anyscale | `https://api.endpoints.anyscale.com/v1` | LLaMA hosted |
 
-**Pattern d'implémentation** :
-```python
-class OpenAICompatibleProvider(BaseLLMProvider):
-    def __init__(self, api_key: str, base_url: str, model_prefix: str = "") -> None:
-        from openai import AsyncOpenAI
-        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
-        self._model_prefix = model_prefix  # ex: "openrouter/" pour OpenRouter
+**Conversions clés** :
+- Messages : wire format Anthropic-style → OpenAI Chat format (tool results = `role: tool`)
+- Tools : `input_schema` → `parameters`, wrappé dans `{"type": "function", "function": {...}}`
+- Réponse : `finish_reason="tool_calls"` → `stop_reason="tool_use"`
 
-    async def call(self, *, system, messages, tools, model, max_tokens) -> LLMResponse:
-        # Convertir wire format → OpenAI format
-        # Appeler self._client.chat.completions.create(...)
-        # Convertir réponse → LLMResponse
-```
+**Ajout dans `factory.py`** : déjà branché — `if s.llm_provider == "openai_compatible"`.
 
-**Ajout dans `factory.py`** :
-```python
-if s.llm_provider == "openai_compatible":
-    from dri.llm.openai_compatible_provider import OpenAICompatibleProvider
-    return OpenAICompatibleProvider(
-        api_key=s.openai_compatible_api_key,
-        base_url=s.openai_compatible_base_url,
-    )
-```
+**Settings** : `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_API_KEY`,
+`OPENAI_COMPATIBLE_DEFAULT_MODEL`, `OPENAI_COMPATIBLE_ROOT_MODEL` (optionnel).
 
 ---
 
@@ -129,7 +115,7 @@ ROOT_MODEL=gemini-2.5-pro         # CEO uniquement
 
 ---
 
-## UX non-technique — `dri setup` (à implémenter)
+## UX non-technique — `dri setup` (IMPLÉMENTÉ Sprint 17)
 
 Pour qu'une personne non-technique puisse configurer un provider sans toucher `.env` :
 

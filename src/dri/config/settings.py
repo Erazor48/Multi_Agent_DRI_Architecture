@@ -15,9 +15,15 @@ class Settings(BaseSettings):
     )
 
     # ── Provider selection ────────────────────────────────────────────────
-    llm_provider: Literal["anthropic", "gemini"] = Field(
-        "gemini", description="Active LLM provider: 'anthropic' or 'gemini'"
+    llm_provider: Literal["anthropic", "gemini", "openai_compatible"] = Field(
+        "gemini", description="Active LLM provider: 'anthropic', 'gemini', or 'openai_compatible'"
     )
+
+    # ── OpenAI-compatible (OpenRouter, Groq, Ollama, Together, Fireworks…) ──
+    openai_compatible_api_key: str = Field("", description="API key for OpenAI-compatible endpoint")
+    openai_compatible_base_url: str = Field("", description="Base URL for OpenAI-compatible endpoint (e.g. https://openrouter.ai/api/v1)")
+    openai_compatible_root_model: str = Field("", description="Model for CEO agent (root)")
+    openai_compatible_default_model: str = Field("", description="Model for managers and workers")
 
     # ── Anthropic ─────────────────────────────────────────────────────────
     anthropic_api_key: str = Field("", description="Anthropic API key")
@@ -41,11 +47,19 @@ class Settings(BaseSettings):
     # ── Unified model accessors (resolve to active provider) ──────────────
     @property
     def root_model(self) -> str:
-        return self.gemini_root_model if self.llm_provider == "gemini" else self.anthropic_root_model
+        if self.llm_provider == "gemini":
+            return self.gemini_root_model
+        if self.llm_provider == "openai_compatible":
+            return self.openai_compatible_root_model or self.openai_compatible_default_model
+        return self.anthropic_root_model
 
     @property
     def default_model(self) -> str:
-        return self.gemini_default_model if self.llm_provider == "gemini" else self.anthropic_default_model
+        if self.llm_provider == "gemini":
+            return self.gemini_default_model
+        if self.llm_provider == "openai_compatible":
+            return self.openai_compatible_default_model
+        return self.anthropic_default_model
 
     # ── Common LLM settings ───────────────────────────────────────────────
     max_tokens_per_response: int = Field(8192, ge=1024, le=65536)
@@ -164,6 +178,11 @@ class Settings(BaseSettings):
                     )
             elif not self.google_api_key:
                 raise ValueError("GOOGLE_API_KEY is required when LLM_PROVIDER=gemini and USE_VERTEX_AI=false")
+        if self.llm_provider == "openai_compatible":
+            if not self.openai_compatible_base_url:
+                raise ValueError("OPENAI_COMPATIBLE_BASE_URL is required when LLM_PROVIDER=openai_compatible")
+            if not self.openai_compatible_default_model:
+                raise ValueError("OPENAI_COMPATIBLE_DEFAULT_MODEL is required when LLM_PROVIDER=openai_compatible")
         return self
 
     @property
@@ -172,7 +191,11 @@ class Settings(BaseSettings):
 
     @property
     def active_api_key(self) -> str:
-        return self.google_api_key if self.llm_provider == "gemini" else self.anthropic_api_key
+        if self.llm_provider == "gemini":
+            return self.google_api_key
+        if self.llm_provider == "openai_compatible":
+            return self.openai_compatible_api_key
+        return self.anthropic_api_key
 
 
 @lru_cache(maxsize=1)

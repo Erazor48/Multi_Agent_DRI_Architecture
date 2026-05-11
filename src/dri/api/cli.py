@@ -1725,6 +1725,164 @@ def sessions() -> None:
     asyncio.run(_list())
 
 
+@app.command()
+def setup() -> None:
+    """Interactive wizard to configure your LLM provider."""
+    from pathlib import Path
+
+    console.print()
+    console.print(
+        Panel.fit(
+            "[bold blue]DRI — Configuration du provider IA[/bold blue]\n"
+            "[dim]Aucune donnée envoyée sans votre accord. Ctrl+C pour annuler.[/dim]",
+            border_style="blue",
+        )
+    )
+    console.print()
+
+    _PROVIDERS = [
+        ("gemini",            "Google Gemini (recommandé — meilleur rapport qualité/prix)"),
+        ("anthropic",         "Anthropic Claude"),
+        ("openai_compatible", "OpenAI / GPT"),
+        ("openai_compatible", "OpenRouter (200+ modèles, un seul compte)"),
+        ("openai_compatible", "Groq (ultra-rapide — LLaMA, Mixtral)"),
+        ("openai_compatible", "Ollama (modèles locaux, gratuit)"),
+        ("openai_compatible", "Autre endpoint compatible OpenAI"),
+    ]
+
+    for i, (_, label) in enumerate(_PROVIDERS, 1):
+        console.print(f"  [bold]{i}.[/bold] {label}")
+
+    console.print()
+    choice_str = Prompt.ask("Votre choix", default="1")
+    try:
+        choice = int(choice_str) - 1
+        if not (0 <= choice < len(_PROVIDERS)):
+            raise ValueError
+    except ValueError:
+        console.print("[red]Choix invalide.[/red]")
+        raise typer.Exit(1)
+
+    provider_key, provider_label = _PROVIDERS[choice]
+    console.print()
+
+    env_lines: dict[str, str] = {}
+
+    # ── Gather provider-specific config ──────────────────────────────────────
+    if provider_key == "gemini":
+        env_lines["LLM_PROVIDER"] = "gemini"
+        env_lines["USE_VERTEX_AI"] = "false"
+        api_key = Prompt.ask("Clé API Google AI Studio (https://aistudio.google.com/app/apikey)", password=True)
+        env_lines["GOOGLE_API_KEY"] = api_key
+        env_lines["GEMINI_ROOT_MODEL"] = "gemini-2.5-pro"
+        env_lines["GEMINI_DEFAULT_MODEL"] = "gemini-2.5-flash"
+
+    elif provider_key == "anthropic":
+        env_lines["LLM_PROVIDER"] = "anthropic"
+        api_key = Prompt.ask("Clé API Anthropic (https://console.anthropic.com/settings/keys)", password=True)
+        env_lines["ANTHROPIC_API_KEY"] = api_key
+        env_lines["ANTHROPIC_ROOT_MODEL"] = "claude-opus-4-7"
+        env_lines["ANTHROPIC_DEFAULT_MODEL"] = "claude-sonnet-4-6"
+
+    else:
+        env_lines["LLM_PROVIDER"] = "openai_compatible"
+
+        _BASE_URLS = {
+            2: "https://api.openai.com/v1",
+            3: "https://openrouter.ai/api/v1",
+            4: "https://api.groq.com/openai/v1",
+            5: "http://localhost:11434/v1",
+        }
+        _DEFAULT_MODELS = {
+            2: "gpt-4o",
+            3: "openai/gpt-4o",
+            4: "llama-3.3-70b-versatile",
+            5: "llama3",
+        }
+        idx = choice + 1  # 1-based original index
+
+        if idx == 6:  # Ollama
+            base_url = "http://localhost:11434/v1"
+            api_key = "ollama"
+            console.print("[dim]Ollama : pas de clé API nécessaire (utilisation locale).[/dim]")
+        elif idx == 7:  # Custom
+            base_url = Prompt.ask("URL de base du endpoint (ex: https://api.monservice.com/v1)")
+            api_key = Prompt.ask("Clé API", password=True)
+        else:
+            base_url = _BASE_URLS.get(idx, "")
+            api_key = Prompt.ask(f"Clé API {provider_label}", password=True)
+
+        env_lines["OPENAI_COMPATIBLE_BASE_URL"] = base_url
+        env_lines["OPENAI_COMPATIBLE_API_KEY"] = api_key
+
+        default_model_hint = _DEFAULT_MODELS.get(idx, "")
+        model = Prompt.ask("Modèle par défaut (managers + workers)", default=default_model_hint)
+        root_model = Prompt.ask("Modèle CEO (laisser vide = même modèle)", default="")
+        env_lines["OPENAI_COMPATIBLE_DEFAULT_MODEL"] = model
+        if root_model:
+            env_lines["OPENAI_COMPATIBLE_ROOT_MODEL"] = root_model
+
+    # ── Test connection ───────────────────────────────────────────────────────
+    console.print()
+    console.print("[dim]Test de connexion…[/dim]")
+
+    async def _test_connection() -> str:
+        import os
+        for k, v in env_lines.items():
+            os.environ[k] = v
+
+        # Reset cached settings so the new env vars are picked up
+        from dri.config.settings import get_settings
+        get_settings.cache_clear()
+
+        try:
+            from dri.llm.factory import create_provider
+            provider = create_provider()
+            response = await provider.call(
+                system="You are a helpful assistant.",
+                messages=[{"role": "user", "content": "Reply with exactly: OK"}],
+                tools=None,
+                model=env_lines.get("OPENAI_COMPATIBLE_DEFAULT_MODEL")
+                    or env_lines.get("GEMINI_DEFAULT_MODEL")
+                    or env_lines.get("ANTHROPIC_DEFAULT_MODEL", ""),
+                max_tokens=16,
+            )
+            return response.text.strip()
+        except Exception as exc:
+            return f"ERROR: {exc}"
+
+    result = asyncio.run(_test_connection())
+
+    if result.startswith("ERROR"):
+        console.print(f"[red]Connexion échouée :[/red] {result[7:]}")
+        console.print("[dim]Vérifiez votre clé API et relancez [bold]dri setup[/bold].[/dim]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]Connexion réussie[/green] — réponse : [italic]{result[:60]}[/italic]")
+
+    # ── Write .env ────────────────────────────────────────────────────────────
+    env_path = Path(".env")
+    existing: dict[str, str] = {}
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, _, v = line.partition("=")
+                existing[k.strip()] = v.strip()
+
+    existing.update(env_lines)
+
+    lines = [f"{k}={v}" for k, v in existing.items()]
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    console.print()
+    console.print(f"[bold green]✓[/bold green] Fichier [bold].env[/bold] mis à jour.")
+    console.print(
+        "[bold green]✓[/bold green] Votre assistant est prêt. "
+        "Lancez : [bold]uv run dri company create[/bold]"
+    )
+    console.print()
+
+
 def main() -> None:
     """Entry point for `dri` CLI command."""
     app()
