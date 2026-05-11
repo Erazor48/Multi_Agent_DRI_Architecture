@@ -165,39 +165,24 @@ Git destructif bloqué au niveau tool : `git clean`, `git rm`, `git restore`, `g
 
 ---
 
-## État Actuel — Sprint 17 terminé (2026-05-12)
+## État Courant
 
-**Tests** : 213 passed / 3 skipped (`uv run pytest tests/ -q`)
-**Git** : propre, commit `73a4099`
-**Entreprises actives** : Agence NextModerne, Zenith
-**Provider actif** : Gemini via Vertex AI (CEO=gemini-2.5-pro, workers=gemini-2.5-flash)
-
-**Sprint 17 livré** :
-- `openai_compatible_provider.py` : OpenRouter, Groq, Ollama, Together AI, OpenAI — un seul provider
-- `dri setup` : wizard interactif (7 providers, test connexion, écriture `.env`)
-- `openai>=1.50.0` ajouté aux dépendances
-- 13 nouveaux tests unitaires (wire format, response parsing, provider.call)
-
-**Priorités suivantes** (dans l'ordre) :
-1. **Test E2E réel d'abord** — lancer `dri company chat` avec Zenith ou NextModerne, observer la qualité réelle avant d'ajouter des features
-2. **Multi-tenancy** — `user_id` sur `persistent_companies`, `company_messages`, `company_agents` — requis avant tout dashboard web
-3. **HTTP API** (FastAPI) → **Dashboard web** (TanStack Start + Convex + Better Auth)
-
-Historique complet des sprints : `.claude/sprint-history.md`
+→ Lire `memory/current_sprint.md` (tests, prochaine action, pièges actifs — mis à jour chaque sprint).
+Ce fichier CLAUDE.md ne doit **pas** être modifié pour l'état courant du projet.
 
 ---
 
-## Notes pour le Prochain Agent
+## Notes Structurelles (stables — ne pas modifier sans raison architecturale)
 
-- **`uv run pytest tests/ -q` en premier.** Doit être 213/3 avant tout commit.
+- **Tests en premier** : `uv run pytest tests/ -q` avant tout commit. Le count cible est dans `memory/current_sprint.md`.
 - Commit style : `feat: X` / `fix: Y` / `refactor: Z`. Un seul concern logique par commit.
 - `settings.py` : `from dri.config.settings import settings` ou `get_settings()`. Jamais `os.environ` direct.
-- **Slug normalization** : toujours `_slug()` dans `cli.py` ou `_company_slug()` dans `company_executor.py` (normalisation NFD pour accents français).
-- **`rich.markup.escape`** (importé `_e` dans `cli.py`) sur TOUT contenu dynamique utilisateur dans les panels/tables.
-- **Ajouter un provider** : `src/dri/llm/<name>_provider.py` → branch dans `factory.py` → settings → doc dans `.claude/architecture-providers.md`. Trois providers implémentés : `gemini`, `anthropic`, `openai_compatible`.
-- **Ajouter un connecteur** : `src/dri/connectors/<name>.py` → `ConnectorRegistry.register()` en bas → import dans `__init__.py`.
+- **Slug normalization** : `_slug()` dans `cli.py` ou `_company_slug()` dans `company_executor.py` (NFD pour accents).
+- **`rich.markup.escape`** (importé `_e` dans `cli.py`) sur TOUT contenu dynamique dans panels/tables.
+- **Ajouter un provider** : `src/dri/llm/<name>_provider.py` → `factory.py` → `settings.py` → `.claude/architecture-providers.md`.
+- **Ajouter un connecteur** : `src/dri/connectors/<name>.py` → `ConnectorRegistry.register()` → import dans `__init__.py`.
 - **LangGraph** n'est PAS utilisé. `graph.py` est un squelette mort.
 - Docs IA dans `.claude/`. `docs/` est entièrement gitignore (notes perso du fondateur).
-- **Gemini thinking mode** : `LLMResponse.thinking` capture le raisonnement interne. `_consecutive_empty` guard dans `BaseAgent._run_agentic_loop()` et `_ceo_loop()` évite les boucles vides.
-- **TanStack Start pour agents** : skill bien définie mais LLMs ont moins de training data sur ce framework récent. Si un agent produit du code TanStack Start incorrect, préférer valider avec `bun run build` systématiquement. Next.js reste une option solide si TanStack pose problème.
-- **Avant d'ajouter des features** : faire un vrai test end-to-end (`dri company chat`) et documenter ce qui ne va pas. La qualité de sortie des agents n'est pas testée systématiquement.
+- **Gemini thinking mode** : `LLMResponse.thinking` capture le raisonnement interne. Guard `_consecutive_empty` dans `BaseAgent._run_agentic_loop()` et `_ceo_loop()`.
+
+Historique complet des sprints : `.claude/sprint-history.md`
