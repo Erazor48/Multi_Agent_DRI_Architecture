@@ -8,6 +8,7 @@ because it is a local UI preference, not business data.
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 
 _STATE_FILE = Path(__file__).parent.parent.parent.parent / ".dri_state"
@@ -40,3 +41,12 @@ def clear_active_company() -> None:
     data = _load()
     data.pop("active_company_id", None)
     _save(data)
+
+
+def get_local_user_id() -> str:
+    """Return the local CLI user ID, creating a UUID on first use."""
+    data = _load()
+    if "user_id" not in data:
+        data["user_id"] = str(uuid.uuid4())
+        _save(data)
+    return data["user_id"]

@@ -294,6 +294,7 @@ class PersistentCompany(BaseModel):
     pitch: str
     org_structure: list[dict[str, Any]] = Field(default_factory=list)  # departments array
     status: str = "active"  # active | archived
+    user_id: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -304,6 +305,7 @@ class CompanyMessage(BaseModel):
     company_id: str
     role: str  # "user" | "ceo"
     content: str
+    user_id: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -315,6 +317,7 @@ class CompanyAgent(BaseModel):
     title: str                        # e.g. "SEO Specialist"
     role: str                         # "manager" | "worker"
     dept_slug: str = ""               # derived from title slug
+    user_id: str = ""
     task_count: int = 0
     success_count: int = 0
     token_budget: int = 0             # 0 = use system default; set via CLI promote

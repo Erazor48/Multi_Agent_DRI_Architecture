@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from dri.storage.orm import Base
@@ -52,11 +53,28 @@ def reset_engine(test_db_url: str | None = None) -> None:
     _override_db_url = test_db_url
 
 
+async def _migrate_db(engine: "AsyncEngine") -> None:
+    """Add columns missing from existing DBs (forward-only, SQLite only)."""
+    migrations = [
+        ("persistent_companies", "user_id", "TEXT NOT NULL DEFAULT ''"),
+        ("company_messages", "user_id", "TEXT NOT NULL DEFAULT ''"),
+        ("company_agents", "user_id", "TEXT NOT NULL DEFAULT ''"),
+    ]
+    async with engine.connect() as conn:
+        for table, col, col_def in migrations:
+            result = await conn.execute(text(f"PRAGMA table_info({table})"))
+            existing = {row[1] for row in result.fetchall()}
+            if col not in existing:
+                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}"))
+        await conn.commit()
+
+
 async def init_db() -> None:
     """Create all tables. Call once at startup."""
     engine = _get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await _migrate_db(engine)
 
 
 async def drop_db() -> None:

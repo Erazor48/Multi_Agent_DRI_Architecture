@@ -102,6 +102,7 @@ class PersistentCompanyORM(Base):
     pitch: Mapped[str] = mapped_column(Text)
     org_structure_json: Mapped[str] = mapped_column(Text, default="[]")
     status: Mapped[str] = mapped_column(String, default="active")
+    user_id: Mapped[str] = mapped_column(String, index=True, server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     messages: Mapped[list["CompanyMessageORM"]] = relationship("CompanyMessageORM", back_populates="company")
@@ -115,6 +116,7 @@ class CompanyMessageORM(Base):
     company_id: Mapped[str] = mapped_column(String, ForeignKey("persistent_companies.id"), index=True)
     role: Mapped[str] = mapped_column(String)   # "user" | "ceo"
     content: Mapped[str] = mapped_column(Text)
+    user_id: Mapped[str] = mapped_column(String, index=True, server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     company: Mapped[PersistentCompanyORM] = relationship("PersistentCompanyORM", back_populates="messages")
@@ -128,6 +130,7 @@ class CompanyAgentORM(Base):
     title: Mapped[str] = mapped_column(String)
     role: Mapped[str] = mapped_column(String)          # "manager" | "worker"
     dept_slug: Mapped[str] = mapped_column(String, default="")
+    user_id: Mapped[str] = mapped_column(String, index=True, server_default="")
     task_count: Mapped[int] = mapped_column(Integer, default=0)
     success_count: Mapped[int] = mapped_column(Integer, default=0)
     token_budget: Mapped[int] = mapped_column(Integer, default=0)  # 0 = use system default

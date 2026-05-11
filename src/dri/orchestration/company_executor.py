@@ -20,6 +20,7 @@ from typing import Any
 _COST_PER_M_TOKENS: float = 0.15
 
 from dri.config.settings import settings
+from dri.config.state import get_local_user_id
 from dri.core.models import CompanyMessage, PersistentCompany
 from dri.llm.factory import create_provider
 from dri.storage.database import get_session, init_db
@@ -242,6 +243,7 @@ class CompanyExecutor:
             vision=design.get("company_vision", ""),
             pitch=pitch,
             org_structure=design.get("departments", []),
+            user_id=get_local_user_id(),
         )
 
         async with get_session() as db:
@@ -470,10 +472,11 @@ class CompanyExecutor:
 
         # Save user message — strip internal routing markers before persisting
         display_message = re.sub(r'^\[DIRECT TASK[^\]]*\]\s*\n*', '', user_message).strip()
+        _uid = get_local_user_id()
         async with get_session() as db:
             msg_repo = CompanyMessageRepository(db)
             await msg_repo.add(CompanyMessage(
-                company_id=company_id, role="user", content=display_message
+                company_id=company_id, role="user", content=display_message, user_id=_uid,
             ))
 
         provider = create_provider()
@@ -493,7 +496,7 @@ class CompanyExecutor:
         async with get_session() as db:
             msg_repo = CompanyMessageRepository(db)
             await msg_repo.add(CompanyMessage(
-                company_id=company_id, role="ceo", content=ceo_response
+                company_id=company_id, role="ceo", content=ceo_response, user_id=_uid,
             ))
 
         return ceo_response
@@ -1226,6 +1229,7 @@ async def _run_task_force(
                 title=node.title,
                 role=node.role.value,
                 dept_slug=_company_slug(node.title),
+                user_id=get_local_user_id(),
             )
             await ca_repo.record_task(ca.id, success=(node.status == _AgentStatus.DONE))
 

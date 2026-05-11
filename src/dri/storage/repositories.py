@@ -311,6 +311,7 @@ class PersistentCompanyRepository:
             pitch=company.pitch,
             org_structure_json=json.dumps(company.org_structure),
             status=company.status,
+            user_id=company.user_id,
             created_at=company.created_at,
         )
         self._db.add(orm)
@@ -328,6 +329,7 @@ class PersistentCompanyRepository:
             pitch=result.pitch,
             org_structure=json.loads(result.org_structure_json),
             status=result.status,
+            user_id=result.user_id,
             created_at=result.created_at,
         )
 
@@ -350,17 +352,17 @@ class PersistentCompanyRepository:
             pitch=row.pitch,
             org_structure=json.loads(row.org_structure_json),
             status=row.status,
+            user_id=row.user_id,
             created_at=row.created_at,
         )
 
-    async def get_latest(self) -> PersistentCompany | None:
+    async def get_latest(self, user_id: str = "") -> PersistentCompany | None:
         import json
-        result = await self._db.execute(
-            select(PersistentCompanyORM)
-            .where(PersistentCompanyORM.status == "active")
-            .order_by(PersistentCompanyORM.created_at.desc())
-            .limit(1)
-        )
+        stmt = select(PersistentCompanyORM).where(PersistentCompanyORM.status == "active")
+        if user_id:
+            stmt = stmt.where(PersistentCompanyORM.user_id == user_id)
+        stmt = stmt.order_by(PersistentCompanyORM.created_at.desc()).limit(1)
+        result = await self._db.execute(stmt)
         row = result.scalar_one_or_none()
         if row is None:
             return None
@@ -371,6 +373,7 @@ class PersistentCompanyRepository:
             pitch=row.pitch,
             org_structure=json.loads(row.org_structure_json),
             status=row.status,
+            user_id=row.user_id,
             created_at=row.created_at,
         )
 
@@ -387,18 +390,18 @@ class PersistentCompanyRepository:
         result.org_structure_json = json.dumps(new_org)
         return True
 
-    async def list_active(self) -> list[PersistentCompany]:
+    async def list_active(self, user_id: str = "") -> list[PersistentCompany]:
         import json
-        result = await self._db.execute(
-            select(PersistentCompanyORM)
-            .where(PersistentCompanyORM.status == "active")
-            .order_by(PersistentCompanyORM.created_at.desc())
-        )
+        stmt = select(PersistentCompanyORM).where(PersistentCompanyORM.status == "active")
+        if user_id:
+            stmt = stmt.where(PersistentCompanyORM.user_id == user_id)
+        stmt = stmt.order_by(PersistentCompanyORM.created_at.desc())
+        result = await self._db.execute(stmt)
         return [
             PersistentCompany(
                 id=row.id, name=row.name, vision=row.vision, pitch=row.pitch,
                 org_structure=json.loads(row.org_structure_json),
-                status=row.status, created_at=row.created_at,
+                status=row.status, user_id=row.user_id, created_at=row.created_at,
             )
             for row in result.scalars()
         ]
@@ -430,6 +433,7 @@ class CompanyMessageRepository:
             company_id=msg.company_id,
             role=msg.role,
             content=msg.content,
+            user_id=msg.user_id,
             created_at=msg.created_at,
         )
         self._db.add(orm)
@@ -443,7 +447,8 @@ class CompanyMessageRepository:
         return [
             CompanyMessage(
                 id=row.id, company_id=row.company_id,
-                role=row.role, content=row.content, created_at=row.created_at,
+                role=row.role, content=row.content,
+                user_id=row.user_id, created_at=row.created_at,
             )
             for row in result.scalars()
         ]
@@ -488,6 +493,7 @@ class CompanyAgentRepository:
         title: str,
         role: str,
         dept_slug: str,
+        user_id: str = "",
     ) -> CompanyAgent:
         """Return the existing CompanyAgent record for this title, or create one."""
         result = await self._db.execute(
@@ -504,6 +510,7 @@ class CompanyAgentRepository:
             title=title,
             role=role,
             dept_slug=dept_slug,
+            user_id=user_id,
         )
         self._db.add(new_orm)
         await self._db.flush()
@@ -559,6 +566,7 @@ class CompanyAgentRepository:
             title=orm.title,
             role=orm.role,
             dept_slug=orm.dept_slug,
+            user_id=orm.user_id,
             task_count=orm.task_count,
             success_count=orm.success_count,
             token_budget=orm.token_budget,

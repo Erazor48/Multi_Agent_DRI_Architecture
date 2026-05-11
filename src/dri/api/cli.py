@@ -198,7 +198,7 @@ async def _resolve_company(company_id: str) -> "PersistentCompany | None":  # ty
       2. Active company from .dri_state
       3. Most recently created (get_latest fallback)
     """
-    from dri.config.state import get_active_company_id
+    from dri.config.state import get_active_company_id, get_local_user_id
     from dri.storage.database import init_db, get_session
     from dri.storage.repositories import PersistentCompanyRepository
 
@@ -215,7 +215,7 @@ async def _resolve_company(company_id: str) -> "PersistentCompany | None":  # ty
             c = await repo.get(active_id)
             if c is not None:
                 return c
-        return await repo.get_latest()
+        return await repo.get_latest(user_id=get_local_user_id())
 
 
 @company_app.command("create")
@@ -269,7 +269,7 @@ def company_create(
 def company_list() -> None:
     """List all persistent companies. The active company is marked with [active]."""
     async def _run() -> None:
-        from dri.config.state import get_active_company_id
+        from dri.config.state import get_active_company_id, get_local_user_id
         from dri.storage.database import init_db, get_session
         from dri.storage.repositories import PersistentCompanyRepository
         from dri.orchestration.company_executor import CompanyExecutor
@@ -278,7 +278,7 @@ def company_list() -> None:
         await init_db()
         async with get_session() as db:
             repo = PersistentCompanyRepository(db)
-            companies = await repo.list_active()
+            companies = await repo.list_active(user_id=get_local_user_id())
 
         # Check for orphan workspaces in parallel with listing
         orphans = await CompanyExecutor.recover_scan()
@@ -338,14 +338,14 @@ def company_use(
 ) -> None:
     """Set the active company (used by default when --id is not specified)."""
     async def _run() -> None:
-        from dri.config.state import get_active_company_id, set_active_company_id
+        from dri.config.state import get_active_company_id, get_local_user_id, set_active_company_id
         from dri.storage.database import init_db, get_session
         from dri.storage.repositories import PersistentCompanyRepository
 
         await init_db()
         async with get_session() as db:
             repo = PersistentCompanyRepository(db)
-            companies = await repo.list_active()
+            companies = await repo.list_active(user_id=get_local_user_id())
 
         if not target.strip():
             active_id = get_active_company_id()
