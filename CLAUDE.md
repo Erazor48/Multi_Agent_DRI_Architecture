@@ -165,24 +165,23 @@ Git destructif bloqué au niveau tool : `git clean`, `git rm`, `git restore`, `g
 
 ---
 
-## État Actuel — Sprint 16 terminé (2026-05-12)
+## État Actuel — Sprint 17 terminé (2026-05-12)
 
-**Tests** : 200 passed / 3 skipped (`uv run pytest tests/ -q`)
-**Git** : propre, 3 commits ahead of origin/master
+**Tests** : 213 passed / 3 skipped (`uv run pytest tests/ -q`)
+**Git** : propre, commit `73a4099`
 **Entreprises actives** : Agence NextModerne, Zenith
 **Provider actif** : Gemini via Vertex AI (CEO=gemini-2.5-pro, workers=gemini-2.5-flash)
 
-**Fixes récents non-sprintés** (committé 2026-05-12) :
-- Gemini 2.5 thinking mode : `LLMResponse.thinking`, `ThinkingConfig(include_thoughts=True)`, guard `_consecutive_empty`
-- Code fence stripping : `_strip_code_fence()` dans cli.py (Gemini enveloppait les réponses en ```)
-- Error display hors `Live(transient=True)` : les erreurs ne disparaissent plus
+**Sprint 17 livré** :
+- `openai_compatible_provider.py` : OpenRouter, Groq, Ollama, Together AI, OpenAI — un seul provider
+- `dri setup` : wizard interactif (7 providers, test connexion, écriture `.env`)
+- `openai>=1.50.0` ajouté aux dépendances
+- 13 nouveaux tests unitaires (wire format, response parsing, provider.call)
 
 **Priorités suivantes** (dans l'ordre) :
 1. **Test E2E réel d'abord** — lancer `dri company chat` avec Zenith ou NextModerne, observer la qualité réelle avant d'ajouter des features
-2. **Provider OpenAI-compatible** — `openai_compatible_provider.py` → OpenRouter, Ollama, Groq. Voir `.claude/architecture-providers.md`
-3. **`dri setup` wizard** — UX non-technique pour configurer un provider
-4. **Multi-tenancy** — `user_id` sur le schema DB — requis avant tout dashboard web
-5. **HTTP API** (FastAPI) → **Dashboard web** (TanStack Start + Convex + Better Auth)
+2. **Multi-tenancy** — `user_id` sur `persistent_companies`, `company_messages`, `company_agents` — requis avant tout dashboard web
+3. **HTTP API** (FastAPI) → **Dashboard web** (TanStack Start + Convex + Better Auth)
 
 Historique complet des sprints : `.claude/sprint-history.md`
 
@@ -190,12 +189,12 @@ Historique complet des sprints : `.claude/sprint-history.md`
 
 ## Notes pour le Prochain Agent
 
-- **`uv run pytest tests/ -q` en premier.** Doit être 200/3 avant tout commit.
+- **`uv run pytest tests/ -q` en premier.** Doit être 213/3 avant tout commit.
 - Commit style : `feat: X` / `fix: Y` / `refactor: Z`. Un seul concern logique par commit.
 - `settings.py` : `from dri.config.settings import settings` ou `get_settings()`. Jamais `os.environ` direct.
 - **Slug normalization** : toujours `_slug()` dans `cli.py` ou `_company_slug()` dans `company_executor.py` (normalisation NFD pour accents français).
 - **`rich.markup.escape`** (importé `_e` dans `cli.py`) sur TOUT contenu dynamique utilisateur dans les panels/tables.
-- **Ajouter un provider** : `src/dri/llm/<name>_provider.py` → branch dans `factory.py` → settings → doc dans `.claude/architecture-providers.md`.
+- **Ajouter un provider** : `src/dri/llm/<name>_provider.py` → branch dans `factory.py` → settings → doc dans `.claude/architecture-providers.md`. Trois providers implémentés : `gemini`, `anthropic`, `openai_compatible`.
 - **Ajouter un connecteur** : `src/dri/connectors/<name>.py` → `ConnectorRegistry.register()` en bas → import dans `__init__.py`.
 - **LangGraph** n'est PAS utilisé. `graph.py` est un squelette mort.
 - Docs IA dans `.claude/`. `docs/` est entièrement gitignore (notes perso du fondateur).
