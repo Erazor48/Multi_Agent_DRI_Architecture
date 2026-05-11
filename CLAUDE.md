@@ -1,6 +1,6 @@
 # DRI Multi-Agent Architecture — CLAUDE.md
 
-> Lis entièrement avant de toucher au code. Mis à jour : Sprint 16 (2026-05-12).
+> Lis entièrement avant de toucher au code. Mis à jour : Sprint 17 (2026-05-12).
 > Docs détaillés dans `.claude/` — `sprint-history.md`, `architecture-memory.md`, `architecture-providers.md`, `CLI-reference.md`.
 
 ---
@@ -43,14 +43,14 @@ L'utilisateur ne parle qu'au CEO. Tout le reste est autonome.
 | Décision | Choix | Raison |
 |---|---|---|
 | Système LLM | `BaseLLMProvider` ABC + `create_provider()` factory | Tout provider swappable — zéro changement dans les agents |
-| Provider actif | Gemini via Vertex AI (défaut) + Anthropic implémenté | CEO=gemini-2.5-pro, workers/managers=gemini-2.5-flash |
+| Provider actif | Gemini (défaut) + Anthropic + OpenAI-compatible implémentés | CEO=gemini-2.5-pro, workers/managers=gemini-2.5-flash |
 | Orchestration | asyncio pur + pattern Spawner | LangGraph skeleton existe dans `graph.py` mais **n'est pas utilisé** |
 | Persistance | SQLAlchemy 2.0 async + SQLite | DB Python interne — ne peut pas être Convex (runtime incompatible) |
 | Validation | Pydantic v2 | Enforcement schéma à toutes les frontières |
 | CLI | Rich + Typer | Interface terminale — dashboard web planifié (Priorité 4) |
 | Stack web apps | TanStack Start + Convex + Better Auth | Remplace Next.js pour tout nouveau web app créé par les agents |
 | Package manager | bun | Toujours `bun install`, `bun run build`, `bunx` |
-| Tests | pytest + pytest-asyncio | Doit rester à 200 passed / 3 skipped |
+| Tests | pytest + pytest-asyncio | Doit rester à 213 passed / 3 skipped |
 
 ---
 
