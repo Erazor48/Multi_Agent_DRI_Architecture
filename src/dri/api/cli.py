@@ -1883,6 +1883,25 @@ def setup() -> None:
     console.print()
 
 
+@app.command()
+def serve(
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
+    port: int = typer.Option(8000, "--port", "-p", help="Port to listen on"),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code changes (dev only)"),
+) -> None:
+    """Start the HTTP API server."""
+    import uvicorn
+    console.print(
+        Panel.fit(
+            f"[bold blue]DRI HTTP API[/bold blue]\n"
+            f"[dim]Listening on http://{host}:{port}[/dim]\n"
+            f"[dim]Docs: http://{host}:{port}/docs[/dim]",
+            border_style="blue",
+        )
+    )
+    uvicorn.run("dri.api.server:app", host=host, port=port, reload=reload)
+
+
 def main() -> None:
     """Entry point for `dri` CLI command."""
     app()

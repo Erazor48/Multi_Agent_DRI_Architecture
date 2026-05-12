@@ -33,6 +33,9 @@ dependencies = [
     "google-auth>=2.23.0",
     "google-auth-oauthlib>=1.1.0",
     "google-cloud-texttospeech>=2.16.0",
+    # HTTP API
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
     # Utilities
     "python-dotenv>=1.0.0",
     "tenacity>=9.0.0",
