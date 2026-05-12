@@ -197,7 +197,7 @@ class CompanyExecutor:
         return company
 
     @staticmethod
-    async def create(pitch: str, on_status: Any = None) -> PersistentCompany:
+    async def create(pitch: str, on_status: Any = None, user_id: str | None = None) -> PersistentCompany:
         """Design a company from a pitch and persist it. Does not spawn agents."""
         await init_db()
 
@@ -243,7 +243,7 @@ class CompanyExecutor:
             vision=design.get("company_vision", ""),
             pitch=pitch,
             org_structure=design.get("departments", []),
-            user_id=get_local_user_id(),
+            user_id=user_id or get_local_user_id(),
         )
 
         async with get_session() as db:

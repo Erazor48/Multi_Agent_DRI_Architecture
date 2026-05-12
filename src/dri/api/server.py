@@ -18,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -130,6 +130,17 @@ async def _sse_stream(
         yield f"data: {item}\n\n"
 
 
+# ── Auth dependency ───────────────────────────────────────────────────────
+
+
+def _resolve_user_id(x_user_id: str | None = Header(default=None)) -> str:
+    """Return X-User-ID header when present (dashboard), else local CLI user."""
+    if x_user_id:
+        return x_user_id
+    from dri.config.state import get_local_user_id
+    return get_local_user_id()
+
+
 # ── Company resolution ────────────────────────────────────────────────────
 
 
@@ -163,26 +174,28 @@ def _get_workspace(company_name: str) -> Path:
 
 
 @app.get("/api/companies")
-async def list_companies() -> list[dict]:
-    from dri.config.state import get_local_user_id
+async def list_companies(user_id: str = Depends(_resolve_user_id)) -> list[dict]:
     from dri.storage.database import get_session
     from dri.storage.repositories import PersistentCompanyRepository
 
     async with get_session() as db:
         repo = PersistentCompanyRepository(db)
-        companies = await repo.list_active(user_id=get_local_user_id())
+        companies = await repo.list_active(user_id=user_id)
     return [_company_dict(c) for c in companies]
 
 
 @app.post("/api/companies", status_code=201)
-async def create_company(body: CreateCompanyBody) -> StreamingResponse:
+async def create_company(
+    body: CreateCompanyBody,
+    user_id: str = Depends(_resolve_user_id),
+) -> StreamingResponse:
     """SSE stream. Final event: {type: result, company: {...}}"""
     if not body.pitch.strip():
         raise HTTPException(status_code=422, detail="pitch cannot be empty")
 
     async def _factory(on_status: Callable[[str], None]) -> dict:
         from dri.orchestration.company_executor import CompanyExecutor
-        company = await CompanyExecutor.create(body.pitch, on_status=on_status)
+        company = await CompanyExecutor.create(body.pitch, on_status=on_status, user_id=user_id)
         return _company_dict(company)
 
     return StreamingResponse(_sse_stream(_factory, result_key="company"), media_type="text/event-stream")

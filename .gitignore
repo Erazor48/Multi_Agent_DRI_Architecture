@@ -18,3 +18,7 @@ test_video/
 dist/
 *.egg-info/
 *.log
+dashboard/node_modules/
+dashboard/.env
+dashboard/.output/
+dashboard/.vinxi/
