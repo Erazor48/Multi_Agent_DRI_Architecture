@@ -61,7 +61,7 @@ async def test_shell_bonus_accumulates(tmp_path, monkeypatch):
     for _ in range(3):
         t = time.time()
         result = await tool.execute({
-            "command": "python -c \"print('x')\"",
+            "command": "python -c \"import time; time.sleep(0.05); print('x')\"",
             "_workspace_root": str(tmp_path),
         })
         assert result.success
