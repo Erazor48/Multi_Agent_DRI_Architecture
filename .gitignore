@@ -20,5 +20,6 @@ dist/
 *.log
 dashboard/node_modules/
 dashboard/.env
+dashboard/.env.local
 dashboard/.output/
 dashboard/.vinxi/

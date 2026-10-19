@@ -1,4 +1,4 @@
-import { createFileRoute, redirect, Link } from '@tanstack/react-router'
+import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
 import { authClient } from '~/lib/auth-client'
 import { getCompany, type Company } from '~/lib/dri-api'
@@ -9,21 +9,22 @@ import { TeamView } from '~/components/TeamView'
 type Tab = 'chat' | 'approvals' | 'team'
 
 export const Route = createFileRoute('/companies/$companyId')({
-  beforeLoad: async () => {
-    const session = await authClient.getSession()
-    if (!session.data) throw redirect({ to: '/login' })
-  },
   component: CompanyPage,
 })
 
 function CompanyPage() {
+  const navigate = useNavigate()
   const { companyId } = Route.useParams()
-  const { data: session } = authClient.useSession()
+  const { data: session, isPending } = authClient.useSession()
   const userId = session?.user.id ?? ''
 
   const [company, setCompany] = useState<Company | null>(null)
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<Tab>('chat')
+
+  useEffect(() => {
+    if (!isPending && !session) navigate({ to: '/login' })
+  }, [isPending, session])
 
   useEffect(() => {
     if (!userId) return

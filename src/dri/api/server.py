@@ -170,6 +170,14 @@ def _get_workspace(company_name: str) -> Path:
     return Path(get_settings().workspace_dir) / slug
 
 
+# ── Root ─────────────────────────────────────────────────────────────────
+
+
+@app.get("/")
+async def root() -> dict:
+    return {"name": "DRI Multi-Agent API", "version": "0.1.0", "docs": "/docs"}
+
+
 # ── Companies ─────────────────────────────────────────────────────────────
 
 

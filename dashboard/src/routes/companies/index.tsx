@@ -1,19 +1,16 @@
-import { createFileRoute, redirect, Link } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
 import { authClient } from '~/lib/auth-client'
 import { listCompanies, createCompany, type Company } from '~/lib/dri-api'
 import { CompanyCard } from '~/components/CompanyCard'
 
 export const Route = createFileRoute('/companies/')({
-  beforeLoad: async () => {
-    const session = await authClient.getSession()
-    if (!session.data) throw redirect({ to: '/login' })
-  },
   component: CompaniesPage,
 })
 
 function CompaniesPage() {
-  const { data: session } = authClient.useSession()
+  const navigate = useNavigate()
+  const { data: session, isPending } = authClient.useSession()
   const userId = session?.user.id ?? ''
 
   const [companies, setCompanies] = useState<Company[]>([])
@@ -23,6 +20,10 @@ function CompaniesPage() {
   const [creating, setCreating] = useState(false)
   const [statusMessages, setStatusMessages] = useState<string[]>([])
   const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (!isPending && !session) navigate({ to: '/login' })
+  }, [isPending, session])
 
   useEffect(() => {
     if (!userId) return

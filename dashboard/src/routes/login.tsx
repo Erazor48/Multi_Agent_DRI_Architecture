@@ -1,22 +1,23 @@
-import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useState, useEffect } from 'react'
 import { authClient } from '~/lib/auth-client'
 
 export const Route = createFileRoute('/login')({
-  beforeLoad: async () => {
-    const session = await authClient.getSession()
-    if (session.data) throw redirect({ to: '/companies' })
-  },
   component: LoginPage,
 })
 
 function LoginPage() {
   const navigate = useNavigate()
+  const { data: session, isPending } = authClient.useSession()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [isSignUp, setIsSignUp] = useState(false)
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!isPending && session) navigate({ to: '/companies' })
+  }, [isPending, session])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -38,6 +39,14 @@ function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (isPending) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-zinc-950">
+        <p className="text-zinc-400">Loading…</p>
+      </div>
+    )
   }
 
   return (
@@ -79,7 +88,7 @@ function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full py-2 bg-zinc-50 text-zinc-900 rounded-lg font-medium hover:bg-zinc-200 disabled:opacity-50 transition-colors"
+            className="w-full py-2 bg-zinc-50 text-zinc-900 rounded-lg font-medium hover:bg-zinc-200 disabled:opacity-50 transition-colors cursor-pointer"
           >
             {loading ? 'Loading…' : isSignUp ? 'Create account' : 'Sign in'}
           </button>
@@ -90,7 +99,7 @@ function LoginPage() {
           <button
             type="button"
             onClick={() => { setIsSignUp(v => !v); setError('') }}
-            className="text-zinc-50 underline"
+            className="text-zinc-50 underline cursor-pointer hover:text-white transition-colors"
           >
             {isSignUp ? 'Sign in' : 'Create one'}
           </button>
